@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: usportz
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: XTREAM_BASE_URL
+        sync: false
+      - key: XTREAM_USERNAME
+        sync: false
+      - key: XTREAM_PASSWORD
+        sync: false
+      - key: CACHE_TTL_SECONDS
+        value: "300"
+      - key: SCOREBOARD_TTL_SECONDS
+        value: "60"
+      - key: REQUEST_TIMEOUT_MS
+        value: "7000"
