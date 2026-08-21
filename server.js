@@ -1,227 +1,54 @@
-const express = require('express');
-const axios = require('axios');
-
-const app = express();
+const express=require('express');
+const axios=require('axios');
+const crypto=require('crypto');
+const app=express();
 app.disable('x-powered-by');
-app.set('etag', false);
+const PORT=Number(process.env.PORT||10000);
+const BASE=(process.env.PUBLIC_BASE_URL||'').replace(/\/$/,'');
+const XTREAM_BASE_URL=(process.env.XTREAM_BASE_URL||'').replace(/\/$/,'');
+const XTREAM_USERNAME=process.env.XTREAM_USERNAME||'';
+const XTREAM_PASSWORD=process.env.XTREAM_PASSWORD||'';
+const REQUEST_TIMEOUT=Number(process.env.REQUEST_TIMEOUT_MS||8000);
+const CACHE_TTL=Number(process.env.CACHE_TTL_SECONDS||300)*1000;
+const SCORE_TTL=Number(process.env.SCOREBOARD_TTL_SECONDS||60)*1000;
+const cache=new Map(),inflight=new Map(),epgCache=new Map(),eventCache=new Map();
 
-const PORT = Number(process.env.PORT || 10000);
-const XTREAM_BASE_URL = (process.env.XTREAM_BASE_URL || '').replace(/\/$/, '');
-const XTREAM_USERNAME = process.env.XTREAM_USERNAME || '';
-const XTREAM_PASSWORD = process.env.XTREAM_PASSWORD || '';
-const CACHE_TTL = Number(process.env.CACHE_TTL_SECONDS || 300) * 1000;
-const SCOREBOARD_TTL = Number(process.env.SCOREBOARD_TTL_SECONDS || 60) * 1000;
-const REQUEST_TIMEOUT = Number(process.env.REQUEST_TIMEOUT_MS || 7000);
-
-const cache = new Map();
-const inflight = new Map();
-
-const LEAGUES = {
-  nfl: { name: 'NFL', sport: 'football', league: 'nfl', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png' },
-  ncaaf: { name: 'NCAA Football', sport: 'football', league: 'college-football', icon: 'https://a.espncdn.com/i/teamlogos/ncaa/500/1.png' },
-  nba: { name: 'NBA', sport: 'basketball', league: 'nba', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/nba.png' },
-  wnba: { name: 'WNBA', sport: 'basketball', league: 'wnba', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/wnba.png' },
-  ncaab: { name: 'NCAA Basketball', sport: 'basketball', league: 'mens-college-basketball', icon: 'https://a.espncdn.com/i/teamlogos/ncaa/500/1.png' },
-  mlb: { name: 'MLB', sport: 'baseball', league: 'mlb', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png' },
-  nhl: { name: 'NHL', sport: 'hockey', league: 'nhl', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png' },
-  mls: { name: 'MLS', sport: 'soccer', league: 'usa.1', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/mls.png' },
-  epl: { name: 'Premier League', sport: 'soccer', league: 'eng.1', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/eng.1.png' },
-  ucl: { name: 'UEFA Champions League', sport: 'soccer', league: 'uefa.champions', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/uefa.champions.png' },
-  laliga: { name: 'LaLiga', sport: 'soccer', league: 'esp.1', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/esp.1.png' },
-  seriea: { name: 'Serie A', sport: 'soccer', league: 'ita.1', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/ita.1.png' },
-  bundesliga: { name: 'Bundesliga', sport: 'soccer', league: 'ger.1', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/ger.1.png' },
-  ligue1: { name: 'Ligue 1', sport: 'soccer', league: 'fra.1', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/fra.1.png' },
-  ufc: { name: 'UFC', sport: 'mma', league: 'ufc', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/ufc.png' },
-  boxing: { name: 'Boxing', sport: 'boxing', league: 'boxing', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/boxing.png' }
+const LEAGUES={
+ nfl:['NFL','football','nfl','🏈'],ncaaf:['NCAA Football','football','college-football','🏈'],
+ nba:['NBA','basketball','nba','🏀'],wnba:['WNBA','basketball','wnba','🏀'],
+ ncaab:['NCAA Basketball','basketball','mens-college-basketball','🏀'],mlb:['MLB','baseball','mlb','⚾'],
+ nhl:['NHL','hockey','nhl','🏒'],mls:['MLS','soccer','usa.1','⚽'],epl:['Premier League','soccer','eng.1','⚽'],
+ ucl:['UEFA Champions League','soccer','uefa.champions','⚽'],laliga:['LaLiga','soccer','esp.1','⚽'],
+ seriea:['Serie A','soccer','ita.1','⚽'],bundesliga:['Bundesliga','soccer','ger.1','⚽'],ligue1:['Ligue 1','soccer','fra.1','⚽']
 };
+const SPORT_RE=/\b(sport|sports|espn|espn\+|fox sports|fs1|fs2|tnt|nba|mlb|nhl|nfl|ncaaf|ncaab|wnba|sec network|acc network|big ten|bally|msg|regional sports|baseball|basketball|football|hockey|soccer|tennis|golf|cbs sports|nbc sports|bein|sky sport|f1|formula|racing)\b/i;
+const STOP=new Set(['the','and','at','vs','v','fc','cf','sc','club','team','live','tv','hd','fhd','uhd','4k','usa','us','network','sports','sport','channel','east','west','main','backup','feed','event']);
+const clean=v=>String(v??'').replace(/\s+/g,' ').trim();
+function norm(v){return clean(v).normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/&/g,' and ').replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter(x=>x&&!STOP.has(x)).join(' ')}
+function toks(v){return norm(v).split(' ').filter(Boolean)}
+function similarity(a,b){const aa=new Set(toks(a)),bb=new Set(toks(b));if(!aa.size||!bb.size)return 0;let n=0;for(const x of aa)if(bb.has(x))n++;return Math.round((n/Math.min(aa.size,bb.size)*.7+n/new Set([...aa,...bb]).size*.3)*100)}
+function cached(key,ttl,loader){const h=cache.get(key);if(h&&h.exp>Date.now())return Promise.resolve(h.v);if(inflight.has(key))return inflight.get(key);const p=Promise.resolve().then(loader).then(v=>{cache.set(key,{v,exp:Date.now()+ttl});return v}).finally(()=>inflight.delete(key));inflight.set(key,p);return p}
+function xtreamApi(action,extra={}){const u=new URL(`${XTREAM_BASE_URL}/player_api.php`);u.searchParams.set('username',XTREAM_USERNAME);u.searchParams.set('password',XTREAM_PASSWORD);if(action)u.searchParams.set('action',action);for(const[k,v]of Object.entries(extra))u.searchParams.set(k,String(v));return u.toString()}
+async function xtream(action,extra={}){if(!XTREAM_BASE_URL||!XTREAM_USERNAME||!XTREAM_PASSWORD)throw Error('Xtream source is not configured');const r=await axios.get(xtreamApi(action,extra),{timeout:REQUEST_TIMEOUT});return r.data}
+async function xtreamIndex(){return cached('xtream:index',CACHE_TTL,async()=>{const[cats,streams]=await Promise.all([xtream('get_live_categories'),xtream('get_live_streams')]);const cm=new Map((Array.isArray(cats)?cats:[]).map(x=>[String(x.category_id),x.category_name||'Live TV']));const rows=(Array.isArray(streams)?streams:[]).map(s=>{const cat=cm.get(String(s.category_id))||'Live TV';const ext=String(s.container_extension||'ts').replace(/[^a-z0-9]/gi,'')||'ts';return{id:String(s.stream_id),name:s.name||`Channel ${s.stream_id}`,category:cat,logo:s.stream_icon||'',url:`${XTREAM_BASE_URL}/live/${encodeURIComponent(XTREAM_USERNAME)}/${encodeURIComponent(XTREAM_PASSWORD)}/${encodeURIComponent(s.stream_id)}.${ext}`,streamId:String(s.stream_id)}});return{all:rows,sports:rows.filter(x=>SPORT_RE.test(`${x.name} ${x.category}`))}})}
+function scoreboardUrl(k,date){const l=LEAGUES[k];return `https://site.api.espn.com/apis/site/v2/sports/${l[1]}/${l[2]}/scoreboard?dates=${date}&limit=100`}
+async function leagueEvents(k){return cached(`score:${k}`,SCORE_TTL,async()=>{const out=[];const now=new Date();for(let i=-1;i<=2;i++){const d=new Date(now);d.setUTCDate(d.getUTCDate()+i);const date=d.toISOString().slice(0,10).replace(/-/g,'');try{const r=await axios.get(scoreboardUrl(k,date),{timeout:REQUEST_TIMEOUT});for(const e of r.data?.events||[]){const c=e.competitions?.[0],cs=c?.competitors||[];const h=cs.find(x=>x.homeAway==='home')?.team||cs[0]?.team||{},a=cs.find(x=>x.homeAway==='away')?.team||cs[1]?.team||{};if(!h.displayName&&!a.displayName)continue;const meta={id:`sport:${k}:${e.id}`,type:'channel',name:`${a.displayName||'TBD'} vs ${h.displayName||'TBD'}`,poster:h.logo||a.logo||LEAGUES[k][3],background:h.logo||a.logo,description:`${LEAGUES[k][0]} • ${c?.status?.type?.shortDetail||e.status?.type?.shortDetail||'Scheduled'}\n${e.date||''}`,releaseInfo:e.date||'',genres:['Sports',LEAGUES[k][0]],sportSource:k,eventId:String(e.id),event:{id:String(e.id),league:k,start:e.date||'',state:c?.status?.type?.state||e.status?.type?.state||'pre',home:{name:h.displayName||'',short:h.abbreviation||'',logo:h.logo||''},away:{name:a.displayName||'',short:a.abbreviation||'',logo:a.logo||''},broadcast:(c?.broadcasts||[]).flatMap(x=>x.names||[])}};eventCache.set(meta.id,meta);out.push(meta)}}catch{}}return out.sort((a,b)=>new Date(a.releaseInfo)-new Date(b.releaseInfo))})}
+async function allSports(){const parts=await Promise.all(Object.keys(LEAGUES).map(leagueEvents));return parts.flat()}
+function directScore(s,e){const text=`${s.name} ${s.category}`,away=similarity(text,e.away.name),home=similarity(text,e.home.name),pair=similarity(text,`${e.away.name} ${e.home.name}`),league=similarity(text,LEAGUES[e.league]?.[0]||'');let score=pair*.5+away*.22+home*.23+league*.05;for(const b of e.broadcast||[])if(norm(text).includes(norm(b)))score=Math.max(score,92);if(/\b(4k|uhd)\b/i.test(s.name))score+=4;if(/\b(fhd|1080)\b/i.test(s.name))score+=2;if(/\b(backup|alt|test)\b/i.test(s.name))score-=5;return Math.round(score)}
+function decode(v){const raw=clean(v);const c=raw.replace(/\s+/g,'');if(!/^[A-Za-z0-9+/]+={0,2}$/.test(c)||c.length<8||c.length%4===1)return raw;try{const d=Buffer.from(c,'base64').toString('utf8').replace(/[\u0000-\u001f]/g,' ').trim();return d&&/[A-Za-z]{2,}/.test(d)?d:raw}catch{return raw}}
+function epgScore(rows,e){let best={score:0,item:null};const aa=toks(e.away.name),hh=toks(e.home.name);for(const x of Array.isArray(rows)?rows:[]){const text=norm(`${decode(x.title||'')} ${decode(x.description||'')}`);let a=0,h=0;for(const t of aa)if(text.includes(t))a++;for(const t of hh)if(text.includes(t))h++;let score=a&&h?88:a||h?58:similarity(text,`${e.away.name} ${e.home.name}`)*.7;if(x.now_playing===1||x.now_playing==='1')score+=10;const ts=Number(x.start_timestamp||0)*1000,es=Date.parse(e.start||'');if(ts&&es){const delta=Math.abs(ts-es);if(delta<2*3600000)score+=10;else if(delta<6*3600000)score+=5}if(score>best.score)best={score:Math.min(100,Math.round(score)),item:x}}return best}
+async function shortEpg(streamId){const key=`epg:${streamId}`,h=epgCache.get(key);if(h&&h.exp>Date.now())return h.v;try{const v=await xtream('get_short_epg',{stream_id:streamId,limit:10});const rows=Array.isArray(v?.epg_listings)?v.epg_listings:[];epgCache.set(key,{v:rows,exp:Date.now()+60000});return rows}catch{return h?.v||[]}}
+async function eventStreams(meta){if(!meta?.event)return[];const index=await xtreamIndex();const e=meta.event;const direct=index.sports.map(s=>({...s,score:directScore(s,e)})).filter(s=>s.score>=45).sort((a,b)=>b.score-a.score);if(direct.length)return direct.slice(0,12);const pool=(index.sports.length?index.sports:index.all).slice(0,180),found=[];let pos=0;const worker=async()=>{while(pos<pool.length){const s=pool[pos++];const hit=epgScore(await shortEpg(s.streamId),e);if(hit.score>=55)found.push({...s,score:hit.score,epgTitle:decode(hit.item?.title||'')})}};await Promise.all(Array.from({length:Math.min(10,pool.length)},worker));return found.sort((a,b)=>b.score-a.score).slice(0,12)}
 
-const STOP = new Set(['the','and','at','vs','v','fc','cf','sc','club','team','live','tv','hd','fhd','uhd','4k','usa','us','network','sports','sport','channel','east','west','main','backup','feed','event']);
+const CATALOGS=Object.entries(LEAGUES).map(([id,l])=>({type:'channel',id,name:`${l[3]} ${l[0]}`,extra:[{name:'search',isRequired:false}]}));
+const manifest={id:'com.usportz.nuvio',version:'2.0.0',name:'USportz',description:'Fast live sports catalogs with authorized Xtream IPTV matching.',resources:[{name:'catalog',types:['channel']},{name:'meta',types:['channel'],idPrefixes:['sport:','xtream:']},{name:'stream',types:['channel'],idPrefixes:['sport:','xtream:']}],types:['channel'],catalogs:CATALOGS,behaviorHints:{configurable:false,configurationRequired:false}};
 
-function normalize(value) {
-  return String(value || '')
-    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ')
-    .split(/\s+/).filter(x => x && !STOP.has(x)).join(' ');
-}
-
-function tokens(value) { return normalize(value).split(' ').filter(Boolean); }
-function similarity(a, b) {
-  const aa = new Set(tokens(a)); const bb = new Set(tokens(b));
-  if (!aa.size || !bb.size) return 0;
-  let common = 0; for (const x of aa) if (bb.has(x)) common++;
-  const containment = common / Math.min(aa.size, bb.size);
-  const jaccard = common / new Set([...aa, ...bb]).size;
-  return Math.round((containment * 0.7 + jaccard * 0.3) * 100);
-}
-
-function getCache(key) {
-  const hit = cache.get(key);
-  if (hit && hit.expires > Date.now()) return hit.value;
-  return null;
-}
-function setCache(key, value, ttl) { cache.set(key, { value, expires: Date.now() + ttl }); return value; }
-async function staleWhileRevalidate(key, loader, ttl) {
-  const hit = cache.get(key);
-  if (hit && hit.expires > Date.now()) return hit.value;
-  if (inflight.has(key)) return inflight.get(key);
-  const p = Promise.resolve().then(loader).then(value => setCache(key, value, ttl)).finally(() => inflight.delete(key));
-  inflight.set(key, p);
-  return p;
-}
-
-async function xtreamGet(action, params = {}) {
-  if (!XTREAM_BASE_URL || !XTREAM_USERNAME || !XTREAM_PASSWORD) throw new Error('Xtream source is not configured');
-  const response = await axios.get(`${XTREAM_BASE_URL}/player_api.php`, {
-    params: { username: XTREAM_USERNAME, password: XTREAM_PASSWORD, action, ...params },
-    timeout: REQUEST_TIMEOUT,
-    responseType: 'json',
-    validateStatus: s => s >= 200 && s < 300
-  });
-  return response.data;
-}
-
-async function loadXtreamIndex() {
-  const categories = await xtreamGet('get_live_categories');
-  const streams = await xtreamGet('get_live_streams');
-  const categoryMap = new Map((Array.isArray(categories) ? categories : []).map(c => [String(c.category_id), c.category_name || 'Sports']));
-  const sports = (Array.isArray(streams) ? streams : []).map(s => ({
-    id: String(s.stream_id), name: s.name || '', categoryId: String(s.category_id || ''), category: categoryMap.get(String(s.category_id || '')) || '',
-    url: s.stream_id ? `${XTREAM_BASE_URL}/live/${encodeURIComponent(XTREAM_USERNAME)}/${encodeURIComponent(XTREAM_PASSWORD)}/${s.stream_id}.m3u8` : '',
-    logo: s.stream_icon || ''
-  })).filter(s => /sport|nfl|nba|nhl|mlb|mls|soccer|football|basket|hockey|baseball|ufc|fight|boxing|espn|fox sports|bein|sky sport|tnt|cbs sports|nbc sports|racing|f1|formula|golf|tennis/i.test(`${s.name} ${s.category}`));
-  return { categories: categoryMap.size, streams: sports, refreshedAt: new Date().toISOString() };
-}
-
-async function getXtreamIndex() {
-  return staleWhileRevalidate('xtream:index', loadXtreamIndex, CACHE_TTL);
-}
-
-function eventId(leagueKey, event) { return `${leagueKey}:${event.id || Buffer.from(event.name).toString('hex').slice(0, 24)}`; }
-function eventName(c) {
-  const comps = c.competitions?.[0]; const competitors = comps?.competitors || [];
-  const home = competitors.find(x => x.homeAway === 'home')?.team?.displayName || competitors[0]?.team?.displayName || 'Home';
-  const away = competitors.find(x => x.homeAway === 'away')?.team?.displayName || competitors[1]?.team?.displayName || 'Away';
-  return `${away} vs ${home}`;
-}
-function flattenScoreboard(data) {
-  return (data?.events || []).map(e => {
-    const c = e.competitions?.[0];
-    const competitors = c?.competitors || [];
-    const home = competitors.find(x => x.homeAway === 'home')?.team || competitors[0]?.team || {};
-    const away = competitors.find(x => x.homeAway === 'away')?.team || competitors[1]?.team || {};
-    return { id: String(e.id), name: eventName(e), date: e.date, state: e.status?.type?.description || e.status?.type?.name || '', stateShort: e.status?.type?.shortDetail || '', home: home.displayName || '', away: away.displayName || '', homeLogo: home.logo || '', awayLogo: away.logo || '', venue: c?.venue?.fullName || '', competitors, broadcasts: (c?.broadcasts || []).flatMap(x => x.names || []) };
-  });
-}
-
-async function fetchLeagueEvents(leagueKey, days = 2) {
-  const league = LEAGUES[leagueKey]; if (!league) return [];
-  const dates = [];
-  const now = new Date();
-  for (let i = -1; i <= days; i++) { const d = new Date(now); d.setUTCDate(d.getUTCDate() + i); dates.push(d.toISOString().slice(0,10).replace(/-/g,'')); }
-  const results = await Promise.all(dates.map(async date => {
-    const key = `scoreboard:${leagueKey}:${date}`;
-    return staleWhileRevalidate(key, async () => {
-      const url = `https://site.api.espn.com/apis/site/v2/sports/${league.sport}/${league.league}/scoreboard?dates=${date}`;
-      try { const r = await axios.get(url, { timeout: REQUEST_TIMEOUT }); return flattenScoreboard(r.data); } catch { return []; }
-    }, SCOREBOARD_TTL);
-  }));
-  return results.flat();
-}
-
-async function allEvents() {
-  const enabled = Object.keys(LEAGUES);
-  const chunks = await Promise.all(enabled.map(k => fetchLeagueEvents(k, 2).then(events => events.map(e => ({ ...e, leagueKey: k, league: LEAGUES[k] })) )));
-  return chunks.flat().sort((a,b) => new Date(a.date) - new Date(b.date));
-}
-
-function isLikelyMatch(stream, event) {
-  const name = `${event.away} ${event.home}`;
-  const s = similarity(stream.name, name);
-  const cat = similarity(stream.category, event.league.name);
-  const away = similarity(stream.name, event.away);
-  const home = similarity(stream.name, event.home);
-  return Math.max(s, Math.round((away + home) * 0.6), cat) >= 45;
-}
-
-function scoreStream(stream, event) {
-  const away = similarity(stream.name, event.away);
-  const home = similarity(stream.name, event.home);
-  const pair = similarity(stream.name, `${event.away} ${event.home}`);
-  const league = similarity(`${stream.name} ${stream.category}`, event.league.name);
-  let score = pair * 0.45 + away * 0.25 + home * 0.25 + league * 0.05;
-  if (/\b(4k|uhd)\b/i.test(stream.name)) score += 5;
-  if (/\b(fhd|1080)\b/i.test(stream.name)) score += 3;
-  if (/\b(hd|720)\b/i.test(stream.name)) score += 1;
-  if (/backup|alt|test/i.test(stream.name)) score -= 4;
-  return Math.round(score);
-}
-
-async function matchedStreams(event) {
-  const index = await getXtreamIndex();
-  return index.streams.map(s => ({ ...s, score: scoreStream(s, event) }))
-    .filter(s => isLikelyMatch(s, event))
-    .sort((a,b) => b.score - a.score)
-    .slice(0, 8);
-}
-
-const manifest = {
-  id: 'com.usportz.nuvio',
-  version: '1.0.0',
-  name: 'USportz',
-  description: 'Fast live sports for Nuvio/Stremio powered by cached Xtream IPTV matching.',
-  logo: 'https://cdn.jsdelivr.net/gh/hurricanes92xx-hub/USportz@main/assets/logo.svg',
-  resources: ['catalog', 'meta', 'stream'],
-  types: ['tv', 'movie'],
-  catalogs: Object.entries(LEAGUES).map(([id,l]) => ({ type: 'tv', id, name: l.name, extraSupported: ['search'] })),
-  idPrefixes: ['com.usportz.nuvio'],
-  behaviorHints: { configurable: true, configurationRequired: false }
-};
-
-app.get('/', (req,res) => res.json({ name: 'USportz', status: 'ok', manifest: '/manifest.json', health: '/health', configured: Boolean(XTREAM_BASE_URL && XTREAM_USERNAME && XTREAM_PASSWORD) }));
-app.get('/health', (req,res) => res.json({ ok: true, xtreamConfigured: Boolean(XTREAM_BASE_URL && XTREAM_USERNAME && XTREAM_PASSWORD), cacheEntries: cache.size, uptime: process.uptime() }));
-app.get('/manifest.json', (req,res) => res.json(manifest));
-
-app.get('/catalog/tv/:id.json', async (req,res) => {
-  try {
-    const league = LEAGUES[req.params.id];
-    if (!league) return res.json({ metas: [] });
-    const events = await fetchLeagueEvents(req.params.id, 2);
-    const metas = events.map(e => ({ id: eventId(req.params.id,e), type:'tv', name:e.name, poster:e.homeLogo || e.awayLogo || league.icon, logo:e.homeLogo || e.awayLogo || league.icon, description:`${league.name} • ${e.stateShort || e.state || 'Scheduled'}${e.venue ? ` • ${e.venue}` : ''}`, releaseInfo:e.date, behaviorHints:{ defaultVideoId:eventId(req.params.id,e) } }));
-    res.set('Cache-Control','public, max-age=30, stale-while-revalidate=120');
-    res.json({ metas });
-  } catch (err) { res.status(200).json({ metas: [], error: 'metadata temporarily unavailable' }); }
-});
-
-app.get('/meta/tv/:id.json', async (req,res) => {
-  try {
-    const [leagueKey, eventKey] = req.params.id.split(':');
-    const events = await fetchLeagueEvents(leagueKey, 2);
-    const e = events.find(x => String(x.id) === eventKey);
-    if (!e) return res.json({ meta: null });
-    res.json({ meta:{ id:req.params.id, type:'tv', name:e.name, poster:e.homeLogo || e.awayLogo || LEAGUES[leagueKey].icon, description:`${LEAGUES[leagueKey].name}\n${e.stateShort || e.state}\n${e.venue || ''}`.trim(), releaseInfo:e.date, videos:[{ id:req.params.id, title:e.name, released:e.date }] } });
-  } catch { res.json({ meta:null }); }
-});
-
-app.get('/stream/tv/:id.json', async (req,res) => {
-  try {
-    const [leagueKey, eventKey] = req.params.id.split(':');
-    const events = await fetchLeagueEvents(leagueKey, 2);
-    const e = events.find(x => String(x.id) === eventKey);
-    if (!e) return res.json({ streams: [] });
-    const streams = await matchedStreams({ ...e, league: LEAGUES[leagueKey] });
-    res.set('Cache-Control','private, max-age=10, stale-while-revalidate=30');
-    res.json({ streams: streams.map(s => ({ name:`USportz • ${s.name}`, title:`${s.name} • Match ${s.score}`, url:s.url, behaviorHints:{ bingeGroup:`usportz-${s.id}` }, externalUrl:s.url })) });
-  } catch (err) { res.status(200).json({ streams: [] }); }
-});
-
-app.get('/api/xtream/status', async (req,res) => {
-  try { const index = await getXtreamIndex(); res.json({ ok:true, streams:index.streams.length, categories:index.categories, refreshedAt:index.refreshedAt }); }
-  catch (e) { res.status(503).json({ ok:false, error:e.message }); }
-});
-
-app.get('/api/cache/refresh', async (req,res) => {
-  try { cache.delete('xtream:index'); const index = await getXtreamIndex(); res.json({ ok:true, streams:index.streams.length, refreshedAt:index.refreshedAt }); }
-  catch (e) { res.status(503).json({ ok:false, error:e.message }); }
-});
-
-app.listen(PORT, '0.0.0.0', () => console.log(`USportz listening on 0.0.0.0:${PORT}`));
+app.get('/',(req,res)=>res.json({name:'USportz',status:'ok',manifest:'/manifest.json',health:'/health',nuvioCompatible:true}));
+app.get('/health',(req,res)=>res.json({ok:true,nuvioCompatible:true,xtreamConfigured:Boolean(XTREAM_BASE_URL&&XTREAM_USERNAME&&XTREAM_PASSWORD),cacheEntries:cache.size,uptime:process.uptime()}));
+app.get('/manifest.json',(req,res)=>res.json(manifest));
+app.get('/catalog/channel/:id.json',async(req,res)=>{try{const id=req.params.id;if(id==='sports-command-center'){const ms=await allSports();return res.json({metas:ms.slice(0,100)})}if(id==='live-now'){const ms=await allSports();return res.json({metas:ms.filter(x=>x.event?.state==='in').slice(0,100)})}if(id==='iptv-live'){const d=await xtreamIndex();return res.json({metas:d.all.slice(0,500).map(s=>({id:`xtream:${s.id}`,type:'channel',name:s.name,poster:s.logo,background:s.logo,description:s.category,genres:['IPTV','Live TV',s.category],behaviorHints:{isLive:true}}))})}if(LEAGUES[id])return res.json({metas:await leagueEvents(id)});return res.json({metas:[]})}catch(e){res.status(200).json({metas:[]})}});
+app.get('/meta/channel/:id.json',async(req,res)=>{try{const id=decodeURIComponent(req.params.id);if(id.startsWith('sport:')){const m=eventCache.get(id)|| (await allSports()).find(x=>x.id===id);return res.json({meta:m||null})}if(id.startsWith('xtream:')){const d=await xtreamIndex(),s=d.all.find(x=>`xtream:${x.id}`===id);return res.json({meta:s?{id,type:'channel',name:s.name,poster:s.logo,background:s.logo,description:s.category,genres:['IPTV','Live TV',s.category],behaviorHints:{isLive:true}}:null})}return res.json({meta:null})}catch{res.json({meta:null})}});
+app.get('/stream/channel/:id.json',async(req,res)=>{try{const id=decodeURIComponent(req.params.id);if(id.startsWith('xtream:')){const d=await xtreamIndex(),s=d.all.find(x=>`xtream:${x.id}`===id);return res.json({streams:s?[{name:`USportz • ${s.name}`,title:s.category,url:s.url,behaviorHints:{isLive:true}}]:[]})}const m=eventCache.get(id)|| (await allSports()).find(x=>x.id===id);const rows=await eventStreams(m);return res.json({streams:rows.map(s=>({name:`USportz • ${s.name}`,title:`${s.category} • Match ${s.score}%${s.epgTitle?` • ${s.epgTitle}`:''}`,url:s.url,behaviorHints:{isLive:true,bingeGroup:`usportz-${s.id}`}}))})}catch{res.status(200).json({streams:[]})}});
+app.get('/api/xtream/status',async(req,res)=>{try{const d=await xtreamIndex();res.json({ok:true,streams:d.all.length,sportsStreams:d.sports.length})}catch(e){res.status(503).json({ok:false,error:e.message})}});
+app.get('/api/cache/refresh',async(req,res)=>{cache.delete('xtream:index');try{const d=await xtreamIndex();res.json({ok:true,streams:d.all.length})}catch(e){res.status(503).json({ok:false,error:e.message})}});
+app.listen(PORT,'0.0.0.0',()=>console.log(`USportz 2.0.0 listening on ${PORT}`));
