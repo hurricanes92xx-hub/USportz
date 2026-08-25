@@ -1,10 +1,10 @@
 {
   "name": "usportz",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "private": false,
-  "description": "Fast Nuvio/Stremio live sports addon with Xtream IPTV source, cached sports metadata and intelligent channel matching.",
-  "main": "server.js",
-  "scripts": { "start": "node server.js", "dev": "node --watch server.js" },
+  "description": "Fast Nuvio/Stremio live sports addon with universal schedules and authorized Xtream IPTV matching.",
+  "main": "sports-live.js",
+  "scripts": { "start": "node sports-live.js", "dev": "node --watch sports-live.js" },
   "engines": { "node": ">=20" },
   "dependencies": { "axios": "^1.7.9", "express": "^4.21.2" },
   "license": "MIT"
