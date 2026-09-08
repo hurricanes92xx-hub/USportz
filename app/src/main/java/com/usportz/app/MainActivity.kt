@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -114,9 +115,7 @@ private fun USportzApp(store: SourceStore) {
                         0 -> {
                             item { HeroCard(events.first()) { tab = 1 } }
                             item { Section("Live & Upcoming") }
-                            items(events.drop(1), key = { it.title }) { event ->
-                                EventCard(event, false) { }
-                            }
+                            items(events.drop(1), key = { it.title }) { event -> EventCard(event, false) {} }
                             item { Section("Your Channels") }
                             if (channels.isEmpty()) {
                                 item { EmptyCard("No source loaded", "Open Settings to connect Xtream Codes or an M3U/M3U8 playlist.") }
@@ -196,30 +195,18 @@ private fun USportzApp(store: SourceStore) {
 
 @Composable
 private fun Header(openSettings: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(top = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column {
-            Text("USportz", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
-            Text("Sports command center", color = Color.Gray)
-        }
+    Row(Modifier.fillMaxWidth().padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column { Text("USportz", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold); Text("Sports command center", color = Color.Gray) }
         IconButton(openSettings) { Icon(Icons.Default.Settings, "Settings") }
     }
 }
 
 @Composable
-private fun Section(text: String) {
-    Text(text, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 22.dp, bottom = 10.dp))
-}
+private fun Section(text: String) { Text(text, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 22.dp, bottom = 10.dp)) }
 
 @Composable
 private fun HeroCard(event: SportEvent, onClick: () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth().padding(top = 16.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp)
-    ) {
+    Card(Modifier.fillMaxWidth().padding(top = 16.dp).clickable(onClick = onClick), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(20.dp)) {
             Text(if (event.live) "LIVE NOW" else "FEATURED", color = Color(0xFF65C9FF), fontWeight = FontWeight.Bold)
             Text(event.title, fontSize = 25.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(top = 5.dp))
@@ -233,14 +220,9 @@ private fun HeroCard(event: SportEvent, onClick: () -> Unit) {
 private fun EventCard(event: SportEvent, favorite: Boolean, onClick: () -> Unit) {
     Card(Modifier.fillMaxWidth().padding(vertical = 5.dp).clickable(onClick = onClick), shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(46.dp).background(Color(0xFF183344), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Sports, null)
-            }
+            Box(Modifier.size(46.dp).background(Color(0xFF183344), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Sports, null) }
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(event.title, fontWeight = FontWeight.Bold)
-                Text("${event.league} • ${event.sport}", color = Color.Gray, fontSize = 13.sp)
-            }
+            Column(Modifier.weight(1f)) { Text(event.title, fontWeight = FontWeight.Bold); Text("${event.league} • ${event.sport}", color = Color.Gray, fontSize = 13.sp) }
             Text(event.time, fontSize = 12.sp)
             Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite")
         }
@@ -251,14 +233,9 @@ private fun EventCard(event: SportEvent, favorite: Boolean, onClick: () -> Unit)
 private fun ChannelCard(channel: Channel, favorite: Boolean, onPlay: () -> Unit, onFavorite: () -> Unit) {
     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(44.dp).background(Color(0xFF16242E), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.LiveTv, null)
-            }
+            Box(Modifier.size(44.dp).background(Color(0xFF16242E), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.LiveTv, null) }
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f).clickable(onClick = onPlay)) {
-                Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                Text(channel.group, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
-            }
+            Column(Modifier.weight(1f).clickable(onClick = onPlay)) { Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 1); Text(channel.group, color = Color.Gray, fontSize = 12.sp, maxLines = 1) }
             IconButton(onFavorite) { Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite") }
             IconButton(onPlay) { Icon(Icons.Default.PlayArrow, "Play") }
         }
@@ -266,22 +243,11 @@ private fun ChannelCard(channel: Channel, favorite: Boolean, onPlay: () -> Unit,
 }
 
 @Composable
-private fun EmptyCard(title: String, message: String) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Column(Modifier.padding(20.dp)) {
-            Text(title, fontWeight = FontWeight.Bold)
-            Text(message, color = Color.Gray, modifier = Modifier.padding(top = 5.dp))
-        }
-    }
-}
+private fun EmptyCard(title: String, message: String) { Card(Modifier.fillMaxWidth().padding(vertical = 8.dp)) { Column(Modifier.padding(20.dp)) { Text(title, fontWeight = FontWeight.Bold); Text(message, color = Color.Gray, modifier = Modifier.padding(top = 5.dp)) } } }
 
 @Composable
 private fun SportFilters(selected: String, onSelected: (String) -> Unit) {
-    LazyRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(sports) { sport ->
-            FilterChip(selected = selected == sport, onClick = { onSelected(sport) }, label = { Text(sport) })
-        }
-    }
+    LazyRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(sports) { sport -> FilterChip(selected = selected == sport, onClick = { onSelected(sport) }, label = { Text(sport) }) } }
 }
 
 @Composable
@@ -293,173 +259,95 @@ private fun SettingsScreen(store: SourceStore, onDone: () -> Unit, onBack: () ->
     var status by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
 
-    Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-            Text("Sources", fontSize = 27.sp, fontWeight = FontWeight.Bold)
-        }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Back") }; Text("Sources", fontSize = 27.sp, fontWeight = FontWeight.Bold) }
         Text("Xtream Codes", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 18.dp))
         OutlinedTextField(server, { server = it }, label = { Text("Server URL") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(user, { user = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-        OutlinedTextField(
-            pass, { pass = it }, label = { Text("Password") },
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-        )
-        Button(
-            enabled = !loading && server.isNotBlank() && user.isNotBlank() && pass.isNotBlank(),
-            onClick = {
-                loading = true; status = "Connecting…"
-                store.saveXtream(server, user, pass) { ok, msg -> loading = false; status = msg; if (ok) onDone() }
-            },
-            modifier = Modifier.padding(top = 10.dp)
-        ) { Text(if (loading) "Loading…" else "Connect Xtream") }
-
+        OutlinedTextField(pass, { pass = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+        Button(enabled = !loading && server.isNotBlank() && user.isNotBlank() && pass.isNotBlank(), onClick = { loading = true; status = "Connecting…"; store.saveXtream(server, user, pass) { ok, msg -> loading = false; status = msg; if (ok) onDone() } }, modifier = Modifier.padding(top = 10.dp)) { Text(if (loading) "Loading…" else "Connect Xtream") }
         HorizontalDivider(Modifier.padding(vertical = 22.dp))
         Text("M3U / M3U8", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         OutlinedTextField(playlist, { playlist = it }, label = { Text("Playlist URL") }, modifier = Modifier.fillMaxWidth())
-        Button(
-            enabled = !loading && playlist.isNotBlank(),
-            onClick = {
-                loading = true; status = "Loading playlist…"
-                store.saveM3u(playlist) { ok, msg -> loading = false; status = msg; if (ok) onDone() }
-            },
-            modifier = Modifier.padding(top = 10.dp)
-        ) { Text("Load playlist") }
-
+        Button(enabled = !loading && playlist.isNotBlank(), onClick = { loading = true; status = "Loading playlist…"; store.saveM3u(playlist) { ok, msg -> loading = false; status = msg; if (ok) onDone() } }, modifier = Modifier.padding(top = 10.dp)) { Text("Load playlist") }
         if (status.isNotBlank()) Text(status, color = Color.Gray, modifier = Modifier.padding(top = 12.dp))
-        Text(
-            "Credentials are stored locally. USportz does not bundle provider credentials or proprietary APK files.",
-            color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 18.dp)
-        )
+        Text("Credentials are stored locally. USportz does not bundle provider credentials or proprietary APK files.", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 18.dp))
     }
 }
 
 @Composable
 private fun PlayerScreen(url: String, onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val player = remember(url) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(url))
-            prepare()
-            playWhenReady = true
-        }
-    }
+    val player = remember(url) { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(url)); prepare(); playWhenReady = true } }
     DisposableEffect(player) { onDispose { player.release() } }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            factory = { PlayerView(it).apply { this.player = player; useController = true } },
-            modifier = Modifier.fillMaxSize()
-        )
-        IconButton(onBack, Modifier.align(Alignment.TopStart).padding(12.dp)) {
-            Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
-        }
+        AndroidView(factory = { PlayerView(it).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
+        IconButton(onBack, Modifier.align(Alignment.TopStart).padding(12.dp)) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
     }
 }
 
 private class SourceStore(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val prefs = context.getSharedPreferences("usportz", Context.MODE_PRIVATE)
-
-    var server: String
-        get() = prefs.getString("server", "") ?: ""
-        private set(value) { prefs.edit().putString("server", value).apply() }
-    var user: String
-        get() = prefs.getString("user", "") ?: ""
-        private set(value) { prefs.edit().putString("user", value).apply() }
-    var pass: String
-        get() = prefs.getString("pass", "") ?: ""
-        private set(value) { prefs.edit().putString("pass", value).apply() }
-    var playlist: String
-        get() = prefs.getString("playlist", "") ?: ""
-        private set(value) { prefs.edit().putString("playlist", value).apply() }
-
-    var channels: List<Channel> = emptyList()
-        private set
-
-    val favorites: Set<String>
-        get() = prefs.getStringSet("favorites", emptySet()) ?: emptySet()
-
-    fun toggleFavorite(id: String): Set<String> {
-        val next = favorites.toMutableSet()
-        if (!next.add(id)) next.remove(id)
-        prefs.edit().putStringSet("favorites", next).apply()
-        return next
-    }
+    var server: String get() = prefs.getString("server", "") ?: ""; private set(value) { prefs.edit().putString("server", value).apply() }
+    var user: String get() = prefs.getString("user", "") ?: ""; private set(value) { prefs.edit().putString("user", value).apply() }
+    var pass: String get() = prefs.getString("pass", "") ?: ""; private set(value) { prefs.edit().putString("pass", value).apply() }
+    var playlist: String get() = prefs.getString("playlist", "") ?: ""; private set(value) { prefs.edit().putString("playlist", value).apply() }
+    var channels: List<Channel> = emptyList(); private set
+    val favorites: Set<String> get() = prefs.getStringSet("favorites", emptySet()) ?: emptySet()
+    fun toggleFavorite(id: String): Set<String> { val next = favorites.toMutableSet(); if (!next.add(id)) next.remove(id); prefs.edit().putStringSet("favorites", next).apply(); return next }
 
     fun saveXtream(base: String, username: String, password: String, done: (Boolean, String) -> Unit) {
         server = base.trimEnd('/'); user = username; pass = password
-        val encodedUser = URLEncoder.encode(username, "UTF-8")
-        val encodedPass = URLEncoder.encode(password, "UTF-8")
-        val url = "$server/get.php?username=$encodedUser&password=$encodedPass&type=m3u_plus&output=ts"
-        load(url, done)
+        val url = "$server/get.php?username=${URLEncoder.encode(username, "UTF-8")}&password=${URLEncoder.encode(password, "UTF-8")}&type=m3u_plus&output=ts"
+        loadUrl(url) { ok, result -> if (ok) { channels = parseM3u(result, url); main.post { done(true, "Loaded ${channels.size} channels") } } else main.post { done(false, result) } }
     }
+    fun saveM3u(value: String, done: (Boolean, String) -> Unit) { playlist = value; loadUrl(value) { ok, result -> if (ok) { channels = parseM3u(result, value); main.post { done(true, "Loaded ${channels.size} channels") } } else main.post { done(false, result) } } }
 
-    fun saveM3u(url: String, done: (Boolean, String) -> Unit) {
-        playlist = url.trim(); load(playlist, done)
-    }
-
-    private fun load(url: String, done: (Boolean, String) -> Unit) {
+    private fun loadUrl(value: String, done: (Boolean, String) -> Unit) {
         Thread {
             try {
-                val parsed = parseM3u(download(url))
-                if (parsed.isEmpty()) main.post { done(false, "No playable channels found") }
-                else { channels = parsed; main.post { done(true, "Loaded ${parsed.size} channels") } }
-            } catch (e: Exception) {
-                main.post { done(false, "Source error: ${e.message ?: "unknown error"}") }
-            }
+                val conn = URL(value).openConnection() as HttpURLConnection
+                conn.connectTimeout = 10000; conn.readTimeout = 15000; conn.instanceFollowRedirects = true
+                conn.setRequestProperty("User-Agent", "USportz/1.0")
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                conn.disconnect(); done(true, text)
+            } catch (e: Exception) { done(false, "Source error: ${e.message ?: "Unable to load source"}") }
         }.start()
     }
 
-    private fun download(url: String): String {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 10_000
-        connection.readTimeout = 20_000
-        connection.requestMethod = "GET"
-        connection.instanceFollowRedirects = true
-        return try {
-            if (connection.responseCode !in 200..299) throw IllegalStateException("HTTP ${connection.responseCode}")
-            connection.inputStream.bufferedReader().use { it.readText() }
-        } finally { connection.disconnect() }
-    }
-}
-
-private fun parseM3u(text: String): List<Channel> {
-    val result = ArrayList<Channel>(minOf(3000, text.length / 100))
-    var name = ""
-    var group = ""
-    var logo: String? = null
-    for (raw in text.lineSequence()) {
-        val line = raw.trim()
-        when {
-            line.startsWith("#EXTINF", true) -> {
-                name = line.substringAfter(",", "Channel").trim()
-                group = Regex("group-title=\"([^\"]*)\"").find(line)?.groupValues?.get(1).orEmpty()
-                logo = Regex("tvg-logo=\"([^\"]*)\"").find(line)?.groupValues?.get(1)
-            }
-            line.isNotBlank() && !line.startsWith("#") && (line.startsWith("http://") || line.startsWith("https://")) -> {
-                val safeName = name.ifBlank { "Channel" }
-                result += Channel(
-                    id = (safeName + "|" + line).hashCode().toString(),
-                    name = safeName,
-                    group = group.ifBlank { "Uncategorized" },
-                    logo = logo,
-                    url = line
-                )
-                name = ""; group = ""; logo = null
+    private fun parseM3u(text: String, source: String): List<Channel> {
+        val lines = text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        val result = ArrayList<Channel>(minOf(3000, lines.size / 2))
+        var pending = emptyMap<String, String>()
+        for (line in lines) {
+            if (line.startsWith("#EXTINF", true)) pending = attrs(line)
+            else if (!line.startsWith("#")) {
+                val name = pending["name"] ?: line.substringAfterLast('/').substringBefore('?').ifBlank { "Channel" }
+                val group = pending["group"] ?: "Live TV"
+                val logo = pending["logo"]
+                val id = "${name.lowercase()}|$line".hashCode().toString()
+                result += Channel(id, name, group, logo, line); pending = emptyMap()
                 if (result.size >= 3000) break
             }
         }
+        return result.distinctBy { it.id }
     }
-    return result
+
+    private fun attrs(extinf: String): Map<String, String> {
+        val map = mutableMapOf<String, String>()
+        Regex("([\\w-]+)=\\\"([^\\\"]*)\\\"").findAll(extinf).forEach { map[it.groupValues[1].lowercase()] = it.groupValues[2] }
+        val comma = extinf.indexOf(',')
+        if (comma >= 0) map["name"] = extinf.substring(comma + 1).trim()
+        return map
+    }
 }
 
 private fun sampleEvents() = listOf(
-    SportEvent("Live Sports Center", "Featured", "NOW", "All", true),
-    SportEvent("College Football", "NCAA", "Tonight", "Football"),
-    SportEvent("NBA", "Basketball", "Tonight", "Basketball"),
-    SportEvent("NHL", "Hockey", "Tonight", "Hockey"),
-    SportEvent("UFC Fight Night", "UFC", "Sat 8:00 PM", "MMA"),
-    SportEvent("WWE Raw", "WWE", "Mon 8:00 PM", "Wrestling")
+    SportEvent("Sunday Night Football", "NFL", "8:20 PM", "Football", true),
+    SportEvent("College Football", "NCAA", "7:00 PM", "Football"),
+    SportEvent("NBA Tonight", "NBA", "8:00 PM", "Basketball"),
+    SportEvent("MLB Tonight", "MLB", "7:10 PM", "Baseball"),
+    SportEvent("NHL Tonight", "NHL", "7:30 PM", "Hockey"),
+    SportEvent("UFC Fight Night", "UFC", "10:00 PM", "MMA")
 )
