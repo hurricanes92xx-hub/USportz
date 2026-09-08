@@ -1,47 +1,20 @@
 # USportz
 
-Fast live-sports addon for Nuvio/Stremio using an Xtream IPTV source plus cached public sports metadata.
+Fresh Android + Android TV sports command center rebuilt from the observed product capabilities of the supplied AK47Sports v1.6 and SportzX 3.2 APKs.
 
-## Architecture
+## Scope
+- Original Kotlin/Jetpack Compose implementation; no proprietary APK code is copied.
+- Xtream Codes M3U+ connection.
+- Generic M3U/M3U8 URL loading and local parsing.
+- Fast in-memory channel indexing after import.
+- Live TV browsing and Media3 playback.
+- Sports/event home and category UI.
+- Favorites persistence.
+- Search foundation.
+- Phone/tablet UI that can also be driven with TV directional input; TV-specific refinements are tracked in `TV_UI.md`.
 
-- ESPN scoreboard metadata is cached briefly so catalogs do not block on Xtream.
-- Xtream live categories and streams are indexed in memory and refreshed in the background.
-- Event-to-channel matching uses normalized team names, league names and quality scoring.
-- Stream requests use the cached index rather than querying Xtream for every event.
-- Render Blueprint and Docker deployment are included.
+## Security
+Xtream credentials are stored only in Android private preferences. Do not commit real credentials, playlists, or provider URLs.
 
-## Render setup
-
-Deploy this repository as a Render Web Service using the included `render.yaml` or choose Docker as the runtime. Render web services must listen on `0.0.0.0` and the service is designed around Render's `PORT` variable.
-
-Set these secrets in Render **Environment**:
-
-- `XTREAM_BASE_URL` — your Xtream server URL, for example `https://provider.example.com`
-- `XTREAM_USERNAME` — your Xtream username
-- `XTREAM_PASSWORD` — your Xtream password
-
-Optional tuning:
-
-- `CACHE_TTL_SECONDS` (default `300`)
-- `SCOREBOARD_TTL_SECONDS` (default `60`)
-- `REQUEST_TIMEOUT_MS` (default `7000`)
-
-Never commit Xtream credentials to GitHub or `render.yaml`.
-
-## Endpoints
-
-- `/manifest.json`
-- `/catalog/tv/{league}.json`
-- `/meta/tv/{league}:{eventId}.json`
-- `/stream/tv/{league}:{eventId}.json`
-- `/health`
-- `/api/xtream/status`
-- `/api/cache/refresh`
-
-## Included leagues
-
-NFL, NCAA Football, NBA, WNBA, NCAA Basketball, MLB, NHL, MLS, Premier League, UEFA Champions League, LaLiga, Serie A, Bundesliga, Ligue 1, UFC and Boxing.
-
-## Notes
-
-USportz is an independent addon implementation. It takes architectural inspiration from the three public projects supplied for this build, rather than copying their private credentials or deployment configuration.
+## Build
+Open in Android Studio with a current Android SDK and run the `app` configuration. The repository intentionally contains no server-side proxy or Render service from the previous USportz project.
