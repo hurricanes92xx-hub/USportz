@@ -27,6 +27,7 @@ class MobilePairingActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MobilePairingScreen(context: Context) {
     val store = remember { SourceStore(context) }
