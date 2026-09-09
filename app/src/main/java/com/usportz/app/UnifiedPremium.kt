@@ -38,8 +38,15 @@ internal fun USportzApp(store: SourceStore) {
     var refresh by remember { mutableIntStateOf(0) }
     val favs = remember { Favs(context) }
 
+    LaunchedEffect(Unit) {
+        val local = SportsChannelBridge.restoreCached(context)
+        if (local.isNotEmpty()) channels = local
+    }
+
     LaunchedEffect(refresh) {
         loading = true
+        val local = SportsChannelBridge.restoreCached(context)
+        if (local.isNotEmpty()) channels = local
         channels = SportsChannelBridge.load(context, refresh > 0)
         runCatching { SportsSchedule.load(refresh > 0, channels) }.onSuccess { events = it }
         loading = false
@@ -79,7 +86,7 @@ private fun iconFor(n: Nav) = when (n) {
     Nav.SOURCES -> Icons.Default.SettingsInputAntenna
 }
 
-private fun bestChannel(e: SportsEvent, c: List<SportsChannel>): SportsChannel? = c.maxByOrNull { ch -> SportsSchedule.matchChannel(e, ch.name, ch.group) }
+private fun bestChannel(e: SportsEvent, c: List<SportsChannel>): SportsChannel? = SportsChannelBridge.bestMatch(e, c)
 
 private fun LazyListScope.home(e: List<SportsEvent>, c: List<SportsChannel>, f: Favs, play: (String) -> Unit) {
     item { Hero(e.firstOrNull { it.state == "in" } ?: e.firstOrNull(), c, play) }
@@ -147,8 +154,8 @@ private fun LazyListScope.sources(s: SourceStore, done: () -> Unit) {
             Text(if (e?.state == "in") "LIVE NOW" else "FEATURED", color = Color(0xFFFF5FAF), fontWeight = FontWeight.Black)
             Text(e?.let { SportsPresentation.matchup(it) } ?: "Your sports command center", fontSize = 24.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(e?.league ?: "Connect a source", color = Color.LightGray)
-            val b = e?.let { bestChannel(it, c) }; val score = if (e != null && b != null) SportsSchedule.matchChannel(e, b.name, b.group) else 0
-            if (e != null && b != null && score > 0) Text("WATCH LIVE  ›", color = Color(0xFF63D7FF), fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 8.dp).clickable { play(b.url) })
+            val b = e?.let { bestChannel(it, c) }
+            if (e != null && b != null) Text("WATCH LIVE  ›", color = Color(0xFF63D7FF), fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 8.dp).clickable { play(b.url) })
         }
     }
 }
@@ -156,13 +163,13 @@ private fun LazyListScope.sources(s: SourceStore, done: () -> Unit) {
 @Composable private fun EventRail(e: List<SportsEvent>, c: List<SportsChannel>, f: Favs, play: (String) -> Unit) = LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { items(e, key = { it.id }) { EventCard(it, c, f, play) } }
 
 @Composable private fun EventCard(e: SportsEvent, c: List<SportsChannel>, f: Favs, play: (String) -> Unit) {
-    val b = bestChannel(e, c); val score = b?.let { SportsSchedule.matchChannel(e, it.name, it.group) } ?: 0
+    val b = bestChannel(e, c)
     Card(Modifier.width(280.dp), shape = RoundedCornerShape(17.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF121522))) {
         Column(Modifier.padding(13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { AsyncImage(e.leagueLogo, e.league, Modifier.size(38.dp), contentScale = ContentScale.Fit); Column(Modifier.weight(1f).padding(horizontal = 8.dp)) { Text(e.league, fontSize = 10.sp, color = Color.Gray); Text(e.shortName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }; IconButton({ f.toggleEvent(e.id) }, Modifier.size(34.dp)) { Icon(if (f.isEventFav(e.id)) Icons.Default.Star else Icons.Default.StarBorder, "Favorite") } }
             Text(e.competitors.joinToString("  •  "), fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 9.dp))
             Text(if (e.state == "in") "● LIVE • ${e.detail}" else e.detail.ifBlank { "Scheduled" }, color = if (e.state == "in") Color(0xFFFF5FAF) else Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(top = 7.dp))
-            if (b != null && score > 0) Button(onClick = { play(b.url) }, modifier = Modifier.fillMaxWidth().padding(top = 7.dp)) { Icon(Icons.Default.PlayArrow, null); Text(if (e.state == "in") "WATCH LIVE" else "WATCH") }
+            if (b != null) Button(onClick = { play(b.url) }, modifier = Modifier.fillMaxWidth().padding(top = 7.dp)) { Icon(Icons.Default.PlayArrow, null); Text(if (e.state == "in") "WATCH LIVE" else "WATCH") }
         }
     }
 }
