@@ -106,10 +106,10 @@ object SportsChannelBridge {
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/json, text/plain, */*")
             conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.6")
+            conn.setRequestProperty("User-Agent", "USportz/1.7")
             if (conn.responseCode !in 200..299) return ""
             val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
-            stream.bufferedReader().use { it.readText().take(8 * 1024 * 1024) }
+            stream.bufferedReader().use { it.readText().take(64 * 1024 * 1024) }
         } finally { conn.disconnect() }
     }
 
@@ -122,7 +122,7 @@ object SportsChannelBridge {
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
             conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.6")
+            conn.setRequestProperty("User-Agent", "USportz/1.7")
             if (conn.responseCode !in 200..299) return@runCatching false
             val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
             stream.bufferedReader().use { reader ->
@@ -245,7 +245,7 @@ object SportsChannelBridge {
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
             conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.6")
+            conn.setRequestProperty("User-Agent", "USportz/1.7")
             if (conn.responseCode !in 200..299) return emptyList()
             val raw = conn.inputStream
             val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(raw) else raw
@@ -256,7 +256,7 @@ object SportsChannelBridge {
     private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
         val array = JSONArray()
         channels.forEach { c -> array.put(JSONObject().apply { put("id", c.id); put("name", c.name); put("group", c.group); put("logo", c.logo ?: ""); put("url", c.url) }) }
-        val root = JSONObject().apply { put("version", 4); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
+        val root = JSONObject().apply { put("version", 5); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
         val target = File(context.noBackupFilesDir, CACHE_FILE)
         val temp = File(context.noBackupFilesDir, "$CACHE_FILE.tmp")
         runCatching { temp.writeText(root.toString()); if (!temp.renameTo(target)) { target.delete(); temp.renameTo(target) } }
