@@ -24,6 +24,7 @@ class LeagueHubActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LeagueHub(key: String, back: () -> Unit) {
     val context = LocalContext.current
