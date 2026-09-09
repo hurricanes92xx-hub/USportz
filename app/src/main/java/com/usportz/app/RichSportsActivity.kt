@@ -32,7 +32,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import java.util.Locale
 
 class RichSportsActivity : ComponentActivity() {
@@ -87,9 +90,10 @@ private fun RichSportsApp() {
 
     val filtered = SportsSchedule.forSport(events, selectedSport)
     val live = SportsSchedule.liveEvents(filtered)
-    val upcoming = SportsSchedule.upcomingEvents(filtered)
+    val upcomingAll = SportsSchedule.upcomingEvents(filtered)
+    val upcoming = if (selectedMode == "Today's") upcomingAll.filter { SportsSchedule.isToday(it) } else upcomingAll
     val featured = live.firstOrNull() ?: upcoming.firstOrNull()
-    val wrestling = events.filter { SportsCatalog.classify(it.name, it.league) == "Wrestling" }.take(6)
+    val wrestling = events.filter { SportsCatalog.classify(it.name, it.league) == "Wrestling" && (it.state == "in" || SportsSchedule.isToday(it)) }.take(6)
 
     fun matched(event: SportsEvent): SportsChannel? = SportsChannelBridge.bestMatch(event, channels)
 
@@ -310,12 +314,14 @@ private fun RichBottomBar(selected: Int, onSelect: (Int) -> Unit) {
     }
 }
 
-private fun formatClock(value: String): String = runCatching {
-    val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(value) ?: return@runCatching value
-    SimpleDateFormat("h:mm a", Locale.getDefault()).format(date)
-}.getOrDefault(value)
+private fun parseInstant(value: String): Instant? = runCatching { Instant.parse(value) }.getOrElse {
+    runCatching { java.time.OffsetDateTime.parse(value).toInstant() }.getOrNull()
+}
 
-private fun formatDay(value: String): String = runCatching {
-    val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(value) ?: return@runCatching ""
-    SimpleDateFormat("EEE, MMM d", Locale.getDefault()).format(date)
-}.getOrDefault("")
+private fun formatClock(value: String): String = parseInstant(value)?.let {
+    DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()).withZone(ZoneId.systemDefault()).format(it)
+} ?: value
+
+private fun formatDay(value: String): String = parseInstant(value)?.let {
+    DateTimeFormatter.ofPattern("EEE, MMM d", Locale.getDefault()).withZone(ZoneId.systemDefault()).format(it)
+} ?: ""
