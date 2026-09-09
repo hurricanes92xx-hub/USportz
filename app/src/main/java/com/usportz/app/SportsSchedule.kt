@@ -16,7 +16,10 @@ data class SportsEvent(
     val state: String,
     val startTime: String,
     val competitors: List<String>,
-    val detail: String
+    val competitorLogos: List<String>,
+    val leagueLogo: String?,
+    val detail: String,
+    val broadcast: String = ""
 )
 
 object SportsSchedule {
@@ -67,29 +70,54 @@ object SportsSchedule {
             connection.connectTimeout = 5000
             connection.readTimeout = 7000
             connection.requestMethod = "GET"
+            connection.setRequestProperty("User-Agent", "USportz/1.0")
             val body = connection.inputStream.bufferedReader().use { it.readText() }
             connection.disconnect()
-            val events = JSONObject(body).optJSONArray("events") ?: return emptyList()
+            val root = JSONObject(body)
+            val events = root.optJSONArray("events") ?: return emptyList()
+            val rootLeagueLogo = root.optJSONArray("leagues")?.optJSONObject(0)
+                ?.optJSONArray("logos")?.optJSONObject(0)?.optString("href").orEmpty()
+
             buildList {
                 for (i in 0 until events.length()) {
                     val event = events.optJSONObject(i) ?: continue
                     val competition = event.optJSONArray("competitions")?.optJSONObject(0) ?: continue
                     val competitors = competition.optJSONArray("competitors") ?: continue
-                    val names = buildList {
-                        for (j in 0 until competitors.length()) {
-                            val c = competitors.optJSONObject(j) ?: continue
-                            val name = c.optJSONObject("team")?.optString("displayName").orEmpty()
-                            if (name.isNotBlank()) add(name)
+                    val names = ArrayList<String>(competitors.length())
+                    val logos = ArrayList<String>(competitors.length())
+                    for (j in 0 until competitors.length()) {
+                        val c = competitors.optJSONObject(j) ?: continue
+                        val team = c.optJSONObject("team") ?: continue
+                        val name = team.optString("displayName")
+                        if (name.isNotBlank()) {
+                            names += name
+                            val logo = team.optString("logo").ifBlank {
+                                team.optJSONArray("logos")?.optJSONObject(0)?.optString("href").orEmpty()
+                            }
+                            logos += logo
                         }
                     }
                     val status = competition.optJSONObject("status")?.optJSONObject("type")
                     val rawName = event.optString("name")
                     val displayLeague = SportsBranding.label(rawName, feed.league)
+                    val broadcast = competition.optJSONArray("broadcasts")?.optJSONObject(0)
+                        ?.optString("names").orEmpty().ifBlank {
+                            competition.optJSONArray("broadcasts")?.optJSONObject(0)?.optString("market").orEmpty()
+                        }
+                    val eventLogo = event.optJSONArray("logos")?.optJSONObject(0)?.optString("href").orEmpty()
                     add(SportsEvent(
-                        id = event.optString("id"), sport = feed.sport, league = displayLeague,
-                        name = rawName, shortName = event.optString("shortName"),
-                        state = status?.optString("state").orEmpty(), startTime = event.optString("date"),
-                        competitors = names, detail = status?.optString("detail").orEmpty()
+                        id = event.optString("id"),
+                        sport = feed.sport,
+                        league = displayLeague,
+                        name = rawName,
+                        shortName = event.optString("shortName"),
+                        state = status?.optString("state").orEmpty(),
+                        startTime = event.optString("date"),
+                        competitors = names,
+                        competitorLogos = logos,
+                        leagueLogo = eventLogo.ifBlank { rootLeagueLogo }.ifBlank { null },
+                        detail = status?.optString("detail").orEmpty(),
+                        broadcast = broadcast
                     ))
                 }
             }
