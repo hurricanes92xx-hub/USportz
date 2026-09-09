@@ -178,25 +178,35 @@ object SportsChannelBridge {
         val bodies = listOf("$base/player_api.php?$query", "$base/panel_api.php?$query")
         for (url in bodies) {
             val body = runCatching { request(url, 20_000) }.getOrNull().orEmpty()
-            val array = runCatching { JSONArray(body) }.getOrNull()
-                ?: runCatching { JSONObject(body).optJSONArray("live_streams") }.getOrNull()
-                ?: continue
+            val array = parseLiveResponse(body) ?: continue
             val result = parseLiveArray(array, base, user, pass)
             if (result.isNotEmpty()) return result
         }
         return emptyList()
     }
 
+    private fun parseLiveResponse(body: String): JSONArray? {
+        val direct = runCatching { JSONArray(body) }.getOrNull()
+        if (direct != null) return direct
+        val obj = runCatching { JSONObject(body) }.getOrNull() ?: return null
+        listOf("live_streams", "streams", "available_channels", "channels", "data").forEach { key ->
+            val array = obj.optJSONArray(key)
+            if (array != null && array.length() > 0) return array
+        }
+        return null
+    }
+
     private fun parseLiveArray(array: JSONArray, base: String, user: String, pass: String): List<SportsChannel> = buildList(array.length()) {
         for (i in 0 until array.length()) {
             val item = array.optJSONObject(i) ?: continue
             val id = clean(item.optString("stream_id")).ifBlank { clean(item.optString("id")) }
-            val name = clean(item.optString("name")).ifBlank { "Channel" }
+            val name = clean(item.optString("name")).ifBlank { clean(item.optString("title")) }.ifBlank { "Channel" }
             if (id.isBlank()) continue
             val group = clean(item.optString("category_name")).ifBlank { clean(item.optString("category")) }.ifBlank { "Live TV" }
-            val logo = clean(item.optString("stream_icon")).ifBlank { clean(item.optString("icon")) }.ifBlank { null }
+            val logo = clean(item.optString("stream_icon")).ifBlank { clean(item.optString("icon")) }.ifBlank { clean(item.optString("logo")) }.ifBlank { null }
             val ext = clean(item.optString("container_extension")).ifBlank { "m3u8" }
-            val url = "$base/live/$user/$pass/$id.$ext"
+            val direct = clean(item.optString("direct_source"))
+            val url = direct.ifBlank { "$base/live/$user/$pass/$id.$ext" }
             add(SportsChannel(id, name, group, logo, url))
         }
     }
@@ -256,7 +266,7 @@ object SportsChannelBridge {
     private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
         val array = JSONArray()
         channels.forEach { c -> array.put(JSONObject().apply { put("id", c.id); put("name", c.name); put("group", c.group); put("logo", c.logo ?: ""); put("url", c.url) }) }
-        val root = JSONObject().apply { put("version", 5); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
+        val root = JSONObject().apply { put("version", 6); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
         val target = File(context.noBackupFilesDir, CACHE_FILE)
         val temp = File(context.noBackupFilesDir, "$CACHE_FILE.tmp")
         runCatching { temp.writeText(root.toString()); if (!temp.renameTo(target)) { target.delete(); temp.renameTo(target) } }
