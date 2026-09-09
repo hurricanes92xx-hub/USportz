@@ -31,13 +31,25 @@ object SportsSchedule {
     @Volatile private var cached: List<SportsEvent> = emptyList()
     @Volatile private var cachedAt = 0L
 
+    // ESPN scoreboard feeds cover the major leagues plus college, international soccer,
+    // combat sports, racing and tennis tours. Unsupported feeds fail independently.
     private val feeds = listOf(
         Feed("football", "nfl"), Feed("football", "college-football"),
-        Feed("basketball", "nba"), Feed("basketball", "wnba"), Feed("basketball", "mens-college-basketball"),
-        Feed("baseball", "mlb"), Feed("hockey", "nhl"),
-        Feed("soccer", "usa.1"), Feed("soccer", "eng.1"), Feed("soccer", "esp.1"),
-        Feed("soccer", "ger.1"), Feed("soccer", "ita.1"), Feed("soccer", "fra.1"), Feed("soccer", "uefa.champions"),
-        Feed("mma", "ufc")
+        Feed("basketball", "nba"), Feed("basketball", "wnba"),
+        Feed("basketball", "mens-college-basketball"), Feed("basketball", "womens-college-basketball"),
+        Feed("baseball", "mlb"), Feed("baseball", "college-baseball"),
+        Feed("hockey", "nhl"), Feed("hockey", "mens-college-hockey"),
+        Feed("soccer", "usa.1"), Feed("soccer", "usa.nwsl"), Feed("soccer", "eng.1"),
+        Feed("soccer", "eng.2"), Feed("soccer", "esp.1"), Feed("soccer", "ger.1"),
+        Feed("soccer", "ita.1"), Feed("soccer", "fra.1"), Feed("soccer", "ned.1"),
+        Feed("soccer", "por.1"), Feed("soccer", "sco.1"), Feed("soccer", "uefa.champions"),
+        Feed("soccer", "uefa.europa"), Feed("soccer", "uefa.europa.conf"), Feed("soccer", "conmebol.libertadores"),
+        Feed("soccer", "conmebol.sudamericana"), Feed("soccer", "fifa.world"),
+        Feed("mma", "ufc"),
+        Feed("racing", "nascar-cup-series"), Feed("racing", "nascar-xfinity-series"),
+        Feed("racing", "nascar-truck-series"), Feed("racing", "formula-1"),
+        Feed("racing", "indycar"), Feed("racing", "motogp"),
+        Feed("tennis", "atp"), Feed("tennis", "wta")
     )
 
     suspend fun load(forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = withContext(Dispatchers.IO) {
@@ -53,7 +65,7 @@ object SportsSchedule {
                 .flatten()
                 .distinctBy { it.id }
                 .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { it.startTime })
-                .take(300)
+                .take(600)
         }
 
         if (fresh.isNotEmpty()) {
@@ -71,10 +83,7 @@ object SportsSchedule {
     fun upcomingEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state != "in" && it.state != "post" }
     fun forSport(events: List<SportsEvent>, sport: String): List<SportsEvent> = if (sport.isBlank() || sport == "All") events else events.filter { SportsCatalog.classify(it.name, it.league) == sport || it.sport.equals(sport, true) }
 
-    /**
-     * Scores each event exactly once before sorting. This avoids repeatedly scanning the
-     * entire Xtream/M3U inventory from a comparator when the source contains thousands of channels.
-     */
+    /** Scores each event exactly once before sorting. */
     private fun prioritizeSourceMatches(events: List<SportsEvent>, channels: List<SportsChannel>): List<SportsEvent> {
         if (events.isEmpty() || channels.isEmpty()) return events
         return events.asSequence()
@@ -89,7 +98,6 @@ object SportsSchedule {
             .toList()
     }
 
-    /** Positive score means the Xtream/M3U inventory contains a plausible channel for this event. */
     fun sourceMatchScore(event: SportsEvent, channels: List<SportsChannel>): Int =
         channels.asSequence().map { matchChannel(event, it.name, it.group) }.maxOrNull() ?: 0
 
@@ -128,13 +136,11 @@ object SportsSchedule {
                     val broadcast = competition.optJSONArray("broadcasts")?.optJSONObject(0)?.optString("names").orEmpty()
                         .ifBlank { competition.optJSONArray("broadcasts")?.optJSONObject(0)?.optString("market").orEmpty() }
                     val eventLogo = event.optJSONArray("logos")?.optJSONObject(0)?.optString("href").orEmpty()
-                    add(
-                        SportsEvent(
-                            event.optString("id"), feed.sport, displayLeague, rawName, event.optString("shortName"),
-                            status?.optString("state").orEmpty(), event.optString("date"), names, logos,
-                            eventLogo.ifBlank { rootLeagueLogo }.ifBlank { null }, status?.optString("detail").orEmpty(), broadcast
-                        )
-                    )
+                    add(SportsEvent(
+                        event.optString("id"), feed.sport, displayLeague, rawName, event.optString("shortName"),
+                        status?.optString("state").orEmpty(), event.optString("date"), names, logos,
+                        eventLogo.ifBlank { rootLeagueLogo }.ifBlank { null }, status?.optString("detail").orEmpty(), broadcast
+                    ))
                 }
             }
         }.getOrDefault(emptyList())
@@ -158,7 +164,10 @@ object SportsSchedule {
             "nfl" to listOf("nfl", "football"), "nba" to listOf("nba", "basketball"), "wnba" to listOf("wnba", "basketball"),
             "mlb" to listOf("mlb", "baseball"), "nhl" to listOf("nhl", "hockey"), "ufc" to listOf("ufc", "mma"),
             "premier league" to listOf("epl", "premier league"), "mls" to listOf("mls", "soccer"),
-            "ncaa football" to listOf("ncaa", "college football", "football"), "ncaa basketball" to listOf("ncaa", "college basketball", "basketball")
+            "ncaa football" to listOf("ncaa", "college football", "football"), "ncaa basketball" to listOf("ncaa", "college basketball", "basketball"),
+            "nascar" to listOf("nascar", "cup", "xfinity", "truck"), "indycar" to listOf("indycar"),
+            "f1" to listOf("f1", "formula 1", "formula one"), "motogp" to listOf("motogp"),
+            "tennis" to listOf("atp", "wta", "tennis")
         )
         aliases[eventLeague].orEmpty().forEach { alias -> if (haystack.contains(normalize(alias))) score += 2 }
         if (event.broadcast.isNotBlank() && haystack.contains(normalize(event.broadcast))) score += 4
