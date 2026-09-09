@@ -5,7 +5,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.time.Instant
 
 /** Public scoreboard integration with short-lived caching for fast TV/mobile startup. */
 data class SportsEvent(
@@ -97,22 +96,27 @@ object SportsSchedule {
 
     fun matchChannel(event: SportsEvent, channelName: String, group: String): Int {
         val haystack = "$channelName $group".lowercase()
-        val tokens = buildList {
-            add(event.league.lowercase())
-            add(event.sport.lowercase())
-            event.competitors.forEach { add(it.lowercase()) }
-        }
         var score = 0
-        tokens.filter { it.length >= 4 }.forEach { token ->
-            if (haystack.contains(token)) score += if (token == event.league.lowercase()) 4 else 3
-        }
+
+        event.competitors.map { it.lowercase() }
+            .flatMap { listOf(it, it.replace(" university", ""), it.replace(" state", " st")) }
+            .filter { it.length >= 4 }
+            .distinct()
+            .forEach { token -> if (haystack.contains(token)) score += 4 }
+
         val leagueAliases = mapOf(
-            "nfl" to listOf("nfl", "football"), "nba" to listOf("nba", "basketball"),
+            "nfl" to listOf("nfl", "football"), "college-football" to listOf("ncaa", "college football"),
+            "nba" to listOf("nba", "basketball"), "wnba" to listOf("wnba", "womens basketball"),
+            "mens-college-basketball" to listOf("ncaa", "college basketball"),
             "mlb" to listOf("mlb", "baseball"), "nhl" to listOf("nhl", "hockey"),
             "ufc" to listOf("ufc", "mma"), "epl" to listOf("epl", "premier league"),
-            "usa.1" to listOf("mls", "soccer")
+            "usa.1" to listOf("mls", "soccer"), "eng.1" to listOf("epl", "premier league", "soccer")
         )
-        leagueAliases[event.league].orEmpty().forEach { if (haystack.contains(it)) score += 2 }
+        leagueAliases[event.league].orEmpty().forEach { alias -> if (haystack.contains(alias)) score += 3 }
+
+        SportsBranding.find(event.name, event.league)?.aliases.orEmpty()
+            .forEach { alias -> if (haystack.contains(alias.lowercase())) score += 2 }
+
         return score
     }
 }
