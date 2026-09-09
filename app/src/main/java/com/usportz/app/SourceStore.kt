@@ -3,13 +3,15 @@ package com.usportz.app
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/** Local source settings only. Channel loading/indexing belongs exclusively to SportsChannelBridge. */
+/** Secure local source settings. Credentials are encrypted at rest and never logged. */
 class SourceStore(private val context: Context) {
-    private val prefs = context.getSharedPreferences("usportz", Context.MODE_PRIVATE)
+    private val prefs by lazy { securePrefs(context) }
     private val main = Handler(Looper.getMainLooper())
     private val io = CoroutineScope(Dispatchers.IO)
 
@@ -41,12 +43,18 @@ class SourceStore(private val context: Context) {
     }
 
     fun saveXtream(base: String, username: String, password: String, done: (Boolean, String) -> Unit) {
-        server = base.trimEnd('/'); user = username; pass = password; playlist = ""
+        server = base.trimEnd('/')
+        user = username.trim()
+        pass = password
+        playlist = ""
         reloadSource(done)
     }
 
     fun saveM3u(url: String, done: (Boolean, String) -> Unit) {
-        playlist = url.trim(); server = ""; user = ""; pass = ""
+        playlist = url.trim()
+        server = ""
+        user = ""
+        pass = ""
         reloadSource(done)
     }
 
@@ -58,6 +66,28 @@ class SourceStore(private val context: Context) {
                 if (channels.isNotEmpty()) done(true, "Connected • ${channels.size} channels indexed")
                 else done(false, result.exceptionOrNull()?.message?.let { "Source error: $it" } ?: "Source returned no channels")
             }
+        }
+    }
+
+    companion object {
+        private const val PREFS_NAME = "usportz"
+        private const val KEY_ENCRYPTION = "usportz_key_v1"
+
+        private fun securePrefs(context: Context) = runCatching {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                context,
+                PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        }.getOrElse {
+            // Do not silently fall back to plaintext storage. A secure-store failure
+            // leaves the source unavailable rather than writing credentials unencrypted.
+            throw IllegalStateException("Secure credential storage unavailable", it)
         }
     }
 }
