@@ -28,20 +28,6 @@ class SourceStore(private val context: Context) {
         get() = prefs.getString("playlist", "").orEmpty()
         private set(value) { prefs.edit().putString("playlist", value).apply() }
 
-    var tvFeedUrl: String
-        get() = prefs.getString("tv_feed_url", "").orEmpty()
-        private set(value) { prefs.edit().putString("tv_feed_url", value).apply() }
-    var tvFeedToken: String
-        get() = prefs.getString("tv_feed_token", "").orEmpty()
-        private set(value) { prefs.edit().putString("tv_feed_token", value).apply() }
-
-    fun saveTvFeed(url: String, token: String, done: (Boolean, String) -> Unit) {
-        tvFeedUrl = url.trim()
-        tvFeedToken = token.trim()
-        RoninTvSchedule.configure(context, tvFeedUrl, tvFeedToken)
-        main.post { done(true, if (tvFeedUrl.isBlank()) "TV schedule feed cleared" else "TV schedule feed saved") }
-    }
-
     fun saveXtream(
         base: String,
         username: String,
