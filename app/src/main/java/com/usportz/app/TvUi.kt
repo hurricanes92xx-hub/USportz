@@ -3,6 +3,7 @@ package com.usportz.app
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.border
 import androidx.compose.runtime.Composable
@@ -22,6 +23,9 @@ object TvUi {
     fun Modifier.dpadFocusable(focusRequester: FocusRequester? = null): Modifier =
         then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .focusable()
+
+    fun Modifier.dpadClickable(onClick: () -> Unit): Modifier =
+        clickable(onClick = onClick)
 
     val focusBorder: BorderStroke = BorderStroke(2.dp, Color(0xFF48B9FF))
 }
