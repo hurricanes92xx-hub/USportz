@@ -46,7 +46,6 @@ object SportsChannelBridge {
                 }
             }
         }.getOrElse {
-            // Migrate the previous array-only cache format.
             runCatching { parseCachedArray(file.readText()) }.getOrDefault(emptyList())
         }
         if (restored.isNotEmpty()) cached = restored
@@ -138,11 +137,11 @@ object SportsChannelBridge {
         }
     }
 
+    /** Parse the complete playlist. There is intentionally no artificial channel-count ceiling. */
     private fun parse(text: String): List<SportsChannel> {
-        val result = ArrayList<SportsChannel>(3000)
+        val result = ArrayList<SportsChannel>()
         var attrs = emptyMap<String, String>()
         text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { line ->
-            if (result.size >= 3000) return@forEach
             when {
                 line.startsWith("#EXTINF", true) -> attrs = parseAttrs(line)
                 !line.startsWith("#") -> {
