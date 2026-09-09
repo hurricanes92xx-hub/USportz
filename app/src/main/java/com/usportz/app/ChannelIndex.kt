@@ -1,11 +1,6 @@
 package com.usportz.app
 
-/**
- * Fast in-memory channel index for large Xtream/M3U inventories.
- *
- * Search is backed by token + prefix buckets instead of scanning every channel.
- * Results are still ranked so exact names, prefixes and group matches win first.
- */
+/** Fast in-memory ranked index for large Xtream/M3U inventories. */
 class ChannelIndex<T>(
     items: List<T>,
     private val name: (T) -> String,
@@ -23,7 +18,6 @@ class ChannelIndex<T>(
 
     fun all(): List<T> = all
 
-    /** Ranked search: exact name > name prefix > token match > group > substring. */
     fun search(query: String, limit: Int = 100): List<T> = rankedSearch(query, null, limit)
 
     fun search(query: String, sport: String, limit: Int = 100): List<T> =
@@ -59,18 +53,10 @@ class ChannelIndex<T>(
         val candidates = linkedSetOf<T>()
         queryTokens.forEach { token ->
             tokenIndex[token]?.let(candidates::addAll)
+            // The prefix index already contains every prefix up to eight characters.
             prefixIndex[token]?.let(candidates::addAll)
-            // Prefix buckets are already materialized, so avoid scanning the full inventory.
-            if (token.length < 8) {
-                var prefix = token
-                while (prefix.length < 8) {
-                    val bucket = prefixIndex[prefix]
-                    if (bucket != null) candidates.addAll(bucket)
-                    if (prefix.length >= token.length + 2) break
-                    prefix += " "
-                }
-            }
         }
+        // Only an unindexed/very unusual query falls back to the full inventory.
         if (candidates.isEmpty()) candidates.addAll(all)
 
         return candidates.asSequence()
