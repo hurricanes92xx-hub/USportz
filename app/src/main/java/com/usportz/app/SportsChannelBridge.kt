@@ -11,6 +11,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.util.zip.GZIPInputStream
 
 /** Reliable channel source with cached-first startup and fast indexed event matching. */
 data class SportsChannel(
@@ -53,6 +54,34 @@ object SportsChannelBridge {
             channelIndex = ChannelIndex(restored, SportsChannel::name, SportsChannel::group)
         }
         return cached
+    }
+
+    /** Small Xtream handshake used by the login screen. It avoids downloading the full M3U. */
+    fun validateXtream(server: String, user: String, pass: String): Boolean {
+        val endpoint = "$server/player_api.php?username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}" 
+        val conn = runCatching { URL(endpoint).openConnection() as HttpURLConnection }.getOrNull() ?: return false
+        return try {
+            conn.connectTimeout = 4_000
+            conn.readTimeout = 5_000
+            conn.instanceFollowRedirects = true
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Accept", "application/json")
+            conn.setRequestProperty("Accept-Encoding", "gzip")
+            conn.setRequestProperty("User-Agent", "USportz/1.2")
+            if (conn.responseCode !in 200..299) return false
+            val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
+            stream.bufferedReader().use { reader ->
+                val text = reader.readText().take(128_000)
+                val json = runCatching { JSONObject(text) }.getOrNull() ?: return true
+                val userInfo = json.optJSONObject("user_info")
+                val status = userInfo?.optString("status").orEmpty()
+                status.isBlank() || status.equals("Active", true) || status.equals("Enabled", true)
+            }
+        } catch (_: Exception) {
+            false
+        } finally {
+            conn.disconnect()
+        }
     }
 
     suspend fun load(context: Context, forceRefresh: Boolean = false): List<SportsChannel> = withContext(Dispatchers.IO) {
@@ -112,15 +141,19 @@ object SportsChannelBridge {
     /** Stream the playlist directly into the parser so huge inventories aren't duplicated as one String. */
     private fun fetchAndParse(source: String): List<SportsChannel> {
         val conn = URL(source).openConnection() as HttpURLConnection
-        conn.connectTimeout = 8_000
+        conn.connectTimeout = 6_000
         conn.readTimeout = 60_000
         conn.instanceFollowRedirects = true
         conn.requestMethod = "GET"
-        conn.setRequestProperty("User-Agent", "USportz/1.1")
+        conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
+        conn.setRequestProperty("Accept-Encoding", "gzip")
+        conn.setRequestProperty("User-Agent", "USportz/1.2")
         return try {
             val code = conn.responseCode
             if (code !in 200..299) throw IllegalStateException("HTTP $code")
-            conn.inputStream.bufferedReader().use(::parse)
+            val raw = conn.inputStream
+            val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(raw) else raw
+            stream.bufferedReader().use(::parse)
         } finally { conn.disconnect() }
     }
 
