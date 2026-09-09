@@ -11,6 +11,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.GZIPInputStream
 
 /** Reliable channel source with cached-first startup and fast indexed event matching. */
@@ -30,6 +31,7 @@ object SportsChannelBridge {
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedSourceKey = ""
     @Volatile private var channelIndex: ChannelIndex<SportsChannel>? = null
+    private val indexing = AtomicBoolean(false)
 
     fun restoreCached(context: Context): List<SportsChannel> {
         if (cached.isNotEmpty()) return cached
@@ -97,27 +99,37 @@ object SportsChannelBridge {
 
         if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt in 0 until CACHE_TTL_MS) return@withContext cached
 
-        val source = when {
-            server.isNotBlank() && user.isNotBlank() && pass.isNotBlank() ->
-                "$server/get.php?username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}&type=m3u_plus&output=ts"
-            playlist.isNotBlank() -> playlist
-            else -> return@withContext cached
-        }
+        // Never start two full playlist downloads at once. This is especially important
+        // immediately after fast login when the home screen is also asking for channels.
+        if (!indexing.compareAndSet(false, true)) return@withContext cached
 
-        val result = runCatching { fetchAndParse(source) }.getOrDefault(emptyList())
-        if (result.isNotEmpty()) {
-            cached = result
-            cachedAt = now
-            cachedSourceKey = sourceKey
-            channelIndex = ChannelIndex(result, SportsChannel::name, SportsChannel::group)
-            persist(context, result, sourceKey, now)
-            result
-        } else {
-            if (cached.isNotEmpty() && cachedAt > 0L && now - cachedAt <= MAX_STALE_MS) cached else emptyList()
+        try {
+            val source = when {
+                server.isNotBlank() && user.isNotBlank() && pass.isNotBlank() ->
+                    "$server/get.php?username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}&type=m3u_plus&output=ts"
+                playlist.isNotBlank() -> playlist
+                else -> return@withContext cached
+            }
+
+            val result = runCatching { fetchAndParse(source) }.getOrDefault(emptyList())
+            if (result.isNotEmpty()) {
+                cached = result
+                cachedAt = System.currentTimeMillis()
+                cachedSourceKey = sourceKey
+                channelIndex = ChannelIndex(result, SportsChannel::name, SportsChannel::group)
+                persist(context, result, sourceKey, cachedAt)
+                result
+            } else {
+                if (cached.isNotEmpty() && cachedAt > 0L && now - cachedAt <= MAX_STALE_MS) cached else emptyList()
+            }
+        } finally {
+            indexing.set(false)
         }
     }
 
     fun cachedChannels(): List<SportsChannel> = cached
+
+    fun isIndexing(): Boolean = indexing.get()
 
     fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? {
         if (channels.isEmpty()) return null
