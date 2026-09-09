@@ -5,21 +5,25 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- USportz: a clean, compact U monogram with a forward-motion slash. -->
+    <!-- Premium USportz badge: electric ring + bold U + forward slash. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#20C8FF"
+        android:strokeWidth="5"
+        android:pathData="M54,17 A37,37 0,1 0,54,91 A37,37 0,1 0,54,17" />
+
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M28,24 L40,24 L40,56 Q40,69 54,69 Q68,69 68,56 L68,24 L80,24 L80,57 Q80,81 54,81 Q28,81 28,57 Z" />
+        android:pathData="M31,31 L42,31 L42,55 Q42,66 54,66 Q66,66 66,55 L66,31 L77,31 L77,56 Q77,77 54,77 Q31,77 31,56 Z" />
 
-    <!-- Forward slash / play accent: reads as speed and action at launcher size. -->
     <path
         android:fillColor="#20C8FF"
-        android:pathData="M61,25 L78,25 L69,40 L80,40 L55,68 L60,49 L50,49 Z" />
+        android:pathData="M61,27 L78,27 L69,43 L80,43 L55,70 L60,51 L50,51 Z" />
 
-    <!-- Small broadcast/speed cuts keep the mark energetic without clutter. -->
     <path
         android:fillColor="#147BFF"
-        android:pathData="M20,66 L39,66 L35,72 L19,72 Z" />
+        android:pathData="M22,67 L36,67 L33,72 L21,72 Z" />
     <path
         android:fillColor="#20C8FF"
-        android:pathData="M17,76 L35,76 L31,82 L16,82 Z" />
+        android:pathData="M20,75 L32,75 L29,80 L19,80 Z" />
 </vector>
