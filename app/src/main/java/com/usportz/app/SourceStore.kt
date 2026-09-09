@@ -28,6 +28,11 @@ class SourceStore(private val context: Context) {
         get() = prefs.getString("playlist", "").orEmpty()
         private set(value) { prefs.edit().putString("playlist", value).apply() }
 
+    /**
+     * Fast Xtream sign-in: authenticate against the small player_api response first,
+     * then build the complete channel index off the UI path. The user can enter the
+     * app as soon as credentials are accepted instead of waiting for a huge M3U.
+     */
     fun saveXtream(
         base: String,
         username: String,
@@ -35,11 +40,38 @@ class SourceStore(private val context: Context) {
         done: (Boolean, String) -> Unit,
         progress: (String) -> Unit = {}
     ) {
-        server = base.trimEnd('/')
-        user = username.trim()
-        pass = password
-        playlist = ""
-        reloadSource(done, progress)
+        val cleanBase = base.trimEnd('/')
+        val cleanUser = username.trim()
+        val cleanPass = password
+        if (cleanBase.isBlank() || cleanUser.isBlank() || cleanPass.isBlank()) {
+            main.post { done(false, "Enter server, username and password") }
+            return
+        }
+
+        io.launch {
+            main.post { progress("Authenticating…") }
+            val valid = SportsChannelBridge.validateXtream(cleanBase, cleanUser, cleanPass)
+            if (!valid) {
+                main.post { done(false, "Xtream login failed — check server or credentials") }
+                return@launch
+            }
+
+            server = cleanBase
+            user = cleanUser
+            pass = cleanPass
+            playlist = ""
+
+            // Never make the initial UI wait on the complete playlist. Index it in the
+            // existing IO scope; future launches use the on-device channel cache.
+            main.post { progress("Connected • indexing channels in background…") }
+            main.post { done(true, "Connected • channel indexing started") }
+
+            io.launch {
+                runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
+                    .onSuccess { channels -> main.post { progress("Indexed ${channels.size} channels") } }
+                    .onFailure { error -> main.post { progress("Connected • channel indexing retry needed: ${error.message ?: "source error"}") } }
+            }
+        }
     }
 
     fun saveM3u(url: String, done: (Boolean, String) -> Unit) {
@@ -47,23 +79,12 @@ class SourceStore(private val context: Context) {
         server = ""
         user = ""
         pass = ""
-        reloadSource(done)
-    }
-
-    private fun reloadSource(done: (Boolean, String) -> Unit, progress: (String) -> Unit = {}) {
         io.launch {
-            main.post { progress("Connecting to source…") }
-            val result = runCatching {
-                main.post { progress("Downloading full channel inventory…") }
-                SportsChannelBridge.load(context, forceRefresh = true)
-            }
+            val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
             val channels = result.getOrDefault(emptyList())
             main.post {
-                if (channels.isNotEmpty()) {
-                    done(true, "Connected • ${channels.size} channels indexed")
-                } else {
-                    done(false, result.exceptionOrNull()?.message?.let { "Source error: $it" } ?: "Source returned no channels")
-                }
+                if (channels.isNotEmpty()) done(true, "Connected • ${channels.size} channels indexed")
+                else done(false, result.exceptionOrNull()?.message?.let { "Source error: $it" } ?: "Source returned no channels")
             }
         }
     }
