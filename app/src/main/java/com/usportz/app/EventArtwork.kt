@@ -60,6 +60,7 @@ internal fun EventArtwork(event: SportsEvent, brand: SportsBrand? = SportsPresen
     val image = BrandAssets.eventLogoUrl(event, brand)
         ?: event.leagueLogo.takeIf { it.isNotBlank() }
         ?: BrandAssets.logoUrl(brand)
+    val brandKey = brand?.key.orEmpty()
     Box(
         Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(if (compact) 16.dp else 20.dp))
             .background(Brush.linearGradient(eventColors(brand, event)))
@@ -70,7 +71,7 @@ internal fun EventArtwork(event: SportsEvent, brand: SportsBrand? = SportsPresen
                 contentDescription = "${eventTitle(brand, event)} artwork",
                 modifier = Modifier.fillMaxSize().padding(if (compact) 12.dp else 18.dp),
                 contentScale = ContentScale.Fit,
-                alpha = if (brand?.key in setOf("wwe", "aew", "tna", "roh")) .96f else .76f
+                alpha = if (brandKey in setOf("wwe", "aew", "tna", "roh")) .96f else .76f
             )
         }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .78f)))))
@@ -84,7 +85,7 @@ internal fun EventArtwork(event: SportsEvent, brand: SportsBrand? = SportsPresen
         Column(Modifier.align(Alignment.BottomStart).padding(if (compact) 12.dp else 15.dp)) {
             Text(brand?.icon ?: "SPORTS", fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.White.copy(alpha = .72f))
             Text(eventTitle(brand, event), fontSize = if (compact) 18.sp else 23.sp, fontWeight = FontWeight.Black, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (brand?.key !in setOf("wwe", "aew", "tna", "roh") && event.competitors.size >= 2) {
+            if (brandKey !in setOf("wwe", "aew", "tna", "roh") && event.competitors.size >= 2) {
                 Text(event.competitors.take(2).joinToString("  VS  "), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = .82f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             } else if (!compact) {
                 Text(event.detail.ifBlank { "LIVE EVENT" }, fontSize = 9.sp, color = Color.White.copy(alpha = .72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
