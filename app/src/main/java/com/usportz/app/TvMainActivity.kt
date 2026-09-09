@@ -36,6 +36,9 @@ import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private data class TvChannel(val id: String, val name: String, val group: String, val url: String)
 
@@ -94,10 +97,19 @@ private fun TvUSportzApp(context: Context) {
 }
 
 @Composable private fun TvHome(events: List<SportsEvent>, channels: List<TvChannel>, favorites: Set<String>, play: (String) -> Unit, favorite: (String) -> Unit) {
+    val live = SportsSchedule.liveEvents(events)
+    val upcoming = SportsSchedule.upcomingEvents(events)
     LazyColumn(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        item { TvHero(events.count { it.state == "in" }, events.count { it.state == "pre" }) }
-        item { TvSection("Live & Upcoming") }
-        item { if (events.isEmpty()) TvEmpty("No schedule available", "Refresh to load the latest public sports scoreboard.") else TvEventRow(events.take(16), channels, play) }
+        item { TvHero(live.size, upcoming.size) }
+        if (live.isNotEmpty()) {
+            item { TvSection("Live Now") }
+            item { TvEventRow(live.take(12), channels, play) }
+        }
+        if (upcoming.isNotEmpty()) {
+            item { TvSection("Coming Up") }
+            item { TvEventRow(upcoming.take(12), channels, play) }
+        }
+        if (events.isEmpty()) item { TvEmpty("No schedule available", "Refresh to load the latest public sports scoreboard.") }
         item { TvSection("Sports") }
         item { TvSportRow() }
         item { TvSection("Your Channels") }
@@ -110,8 +122,9 @@ private fun TvUSportzApp(context: Context) {
         TvSection("Sports")
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(SportsCatalog.categories) { TvFilter(it, selected == it) { onSelected(it) } } }
         Spacer(Modifier.height(18.dp))
-        val filteredEvents = if (selected == "All") events else events.filter { SportsCatalog.classify(it.name, it.sport) == selected || it.sport.equals(selected, true) }
+        val filteredEvents = if (selected == "All") events else events.filter { SportsCatalog.classify(it.name, it.league) == selected || it.sport.equals(selected, true) }
         if (filteredEvents.isNotEmpty()) { TvSection("Events"); TvEventRow(filteredEvents.take(20), channels, play) }
+        else TvEmpty("No events in this sport", "Try another sport or refresh the schedule.")
         Spacer(Modifier.height(18.dp))
         val filteredChannels = ChannelIndex(channels, { it.name }, { it.group }).forSport(selected)
         if (filteredChannels.isEmpty()) TvEmpty("No matching channels", "The schedule can still show events even when your source has no matching channel.") else TvChannelList(filteredChannels, favorites, play, favorite)
@@ -143,13 +156,35 @@ private fun TvUSportzApp(context: Context) {
 }
 
 @Composable private fun TvEventCard(event: SportsEvent, channel: TvChannel?, play: (String) -> Unit) {
-    Column(Modifier.width(270.dp).height(145.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF101820)).padding(16.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(event.league.uppercase(), color = Color(0xFF65C9FF), fontWeight = FontWeight.Bold); Text(if (event.state == "in") "LIVE" else event.detail.ifBlank { "UPCOMING" }, color = if (event.state == "in") Color(0xFF8BD7FF) else Color.Gray) }
-        Text(event.shortName.ifBlank { event.name }, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 2, modifier = Modifier.padding(top = 10.dp))
-        if (channel != null) TvButton("Watch ${channel.name}", Icons.Default.PlayArrow) { play(channel.url) }
-        else Text("No matched channel", color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+    val live = event.state == "in"
+    val time = formatEventTime(event.startTime)
+    Column(Modifier.width(300.dp).height(205.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF101820)).padding(17.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(if (live) Color(0xFF48B9FF) else Color.Gray))
+                Spacer(Modifier.width(7.dp))
+                Text(event.league.uppercase(), color = Color(0xFF65C9FF), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+            Text(if (live) "LIVE" else event.detail.ifBlank { time.ifBlank { "UPCOMING" } }, color = if (live) Color(0xFF8BD7FF) else Color.Gray, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        }
+        Text(event.shortName.ifBlank { event.name }, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, modifier = Modifier.padding(top = 11.dp))
+        if (event.competitors.isNotEmpty()) {
+            Text(event.competitors.joinToString("  •  "), color = Color.LightGray, fontSize = 13.sp, maxLines = 2, modifier = Modifier.padding(top = 6.dp))
+        }
+        if (time.isNotBlank() && !live) Text(time, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
+        Spacer(Modifier.height(9.dp))
+        if (channel != null) {
+            TvButton("WATCH • ${channel.name}", Icons.Default.PlayArrow) { play(channel.url) }
+        } else {
+            Text("No matched channel", color = Color.Gray, fontSize = 12.sp)
+        }
     }
 }
+
+private fun formatEventTime(value: String): String = runCatching {
+    val parsed = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(value) ?: return ""
+    SimpleDateFormat("EEE h:mm a", Locale.US).format(Date(parsed.time))
+}.getOrElse { "" }
 
 @Composable private fun TvSportRow() { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(SportsCatalog.categories.filter { it != "All" }.take(10)) { TvTile(it) } } }
 
