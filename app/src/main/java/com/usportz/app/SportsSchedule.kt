@@ -71,14 +71,22 @@ object SportsSchedule {
     fun upcomingEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state != "in" && it.state != "post" }
     fun forSport(events: List<SportsEvent>, sport: String): List<SportsEvent> = if (sport.isBlank() || sport == "All") events else events.filter { SportsCatalog.classify(it.name, it.league) == sport || it.sport.equals(sport, true) }
 
+    /**
+     * Scores each event exactly once before sorting. This avoids repeatedly scanning the
+     * entire Xtream/M3U inventory from a comparator when the source contains thousands of channels.
+     */
     private fun prioritizeSourceMatches(events: List<SportsEvent>, channels: List<SportsChannel>): List<SportsEvent> {
         if (events.isEmpty() || channels.isEmpty()) return events
-        return events.sortedWith(
-            compareByDescending<SportsEvent> { sourceMatchScore(it, channels) > 0 }
-                .thenByDescending { sourceMatchScore(it, channels) }
-                .thenByDescending { it.state == "in" }
-                .thenBy { it.startTime }
-        )
+        return events.asSequence()
+            .map { event -> event to sourceMatchScore(event, channels) }
+            .sortedWith(
+                compareByDescending<Pair<SportsEvent, Int>> { it.second > 0 }
+                    .thenByDescending { it.second }
+                    .thenByDescending { it.first.state == "in" }
+                    .thenBy { it.first.startTime }
+            )
+            .map { it.first }
+            .toList()
     }
 
     /** Positive score means the Xtream/M3U inventory contains a plausible channel for this event. */
