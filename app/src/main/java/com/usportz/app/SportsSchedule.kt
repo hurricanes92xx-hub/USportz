@@ -5,8 +5,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.Instant
 
-/** Public ESPN scoreboard integration used for the TV sports rail. */
+/** Public scoreboard integration with short-lived caching for fast TV/mobile startup. */
 data class SportsEvent(
     val id: String,
     val sport: String,
@@ -22,25 +23,43 @@ data class SportsEvent(
 object SportsSchedule {
     private data class Feed(val sport: String, val league: String)
 
+    private const val CACHE_TTL_MS = 2 * 60 * 1000L
+    @Volatile private var cached: List<SportsEvent> = emptyList()
+    @Volatile private var cachedAt = 0L
+
     private val feeds = listOf(
-        Feed("football", "nfl"),
-        Feed("football", "college-football"),
-        Feed("basketball", "nba"),
-        Feed("basketball", "wnba"),
-        Feed("basketball", "mens-college-basketball"),
-        Feed("baseball", "mlb"),
-        Feed("hockey", "nhl"),
-        Feed("soccer", "usa.1"),
-        Feed("soccer", "eng.1"),
+        Feed("football", "nfl"), Feed("football", "college-football"),
+        Feed("basketball", "nba"), Feed("basketball", "wnba"),
+        Feed("basketball", "mens-college-basketball"), Feed("baseball", "mlb"),
+        Feed("hockey", "nhl"), Feed("soccer", "usa.1"), Feed("soccer", "eng.1"),
         Feed("mma", "ufc")
     )
 
-    suspend fun load(): List<SportsEvent> = withContext(Dispatchers.IO) {
-        feeds.flatMap { feed -> fetch(feed) }
-            .sortedBy { it.startTime }
+    suspend fun load(forceRefresh: Boolean = false): List<SportsEvent> = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && cached.isNotEmpty() && now - cachedAt < CACHE_TTL_MS) return@withContext cached
+
+        val fresh = feeds.flatMap { fetch(it) }
             .distinctBy { it.id }
+            .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { it.startTime })
             .take(200)
+
+        if (fresh.isNotEmpty()) {
+            cached = fresh
+            cachedAt = now
+            fresh
+        } else {
+            cached
+        }
     }
+
+    fun isCacheFresh(): Boolean = cached.isNotEmpty() && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS
+    fun lastUpdatedEpochMs(): Long = cachedAt
+
+    fun liveEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state == "in" }
+    fun upcomingEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state != "in" && it.state != "post" }
+    fun forSport(events: List<SportsEvent>, sport: String): List<SportsEvent> =
+        if (sport.isBlank() || sport == "All") events else events.filter { SportsCatalog.classify(it.name, it.league) == sport || it.sport.equals(sport, true) }
 
     private fun fetch(feed: Feed): List<SportsEvent> {
         val url = "https://site.api.espn.com/apis/site/v2/sports/${feed.sport}/${feed.league}/scoreboard"
@@ -60,24 +79,16 @@ object SportsSchedule {
                     val names = buildList {
                         for (j in 0 until competitors.length()) {
                             val c = competitors.optJSONObject(j) ?: continue
-                            val team = c.optJSONObject("team")
-                            val name = team?.optString("displayName").orEmpty()
+                            val name = c.optJSONObject("team")?.optString("displayName").orEmpty()
                             if (name.isNotBlank()) add(name)
                         }
                     }
                     val status = competition.optJSONObject("status")?.optJSONObject("type")
-                    val state = status?.optString("state").orEmpty()
-                    val detail = status?.optString("detail").orEmpty()
                     add(SportsEvent(
-                        id = event.optString("id"),
-                        sport = feed.sport,
-                        league = feed.league,
-                        name = event.optString("name"),
-                        shortName = event.optString("shortName"),
-                        state = state,
-                        startTime = event.optString("date"),
-                        competitors = names,
-                        detail = detail
+                        id = event.optString("id"), sport = feed.sport, league = feed.league,
+                        name = event.optString("name"), shortName = event.optString("shortName"),
+                        state = status?.optString("state").orEmpty(), startTime = event.optString("date"),
+                        competitors = names, detail = status?.optString("detail").orEmpty()
                     ))
                 }
             }
@@ -96,12 +107,9 @@ object SportsSchedule {
             if (haystack.contains(token)) score += if (token == event.league.lowercase()) 4 else 3
         }
         val leagueAliases = mapOf(
-            "nfl" to listOf("nfl", "football"),
-            "nba" to listOf("nba", "basketball"),
-            "mlb" to listOf("mlb", "baseball"),
-            "nhl" to listOf("nhl", "hockey"),
-            "ufc" to listOf("ufc", "mma"),
-            "epl" to listOf("epl", "premier league"),
+            "nfl" to listOf("nfl", "football"), "nba" to listOf("nba", "basketball"),
+            "mlb" to listOf("mlb", "baseball"), "nhl" to listOf("nhl", "hockey"),
+            "ufc" to listOf("ufc", "mma"), "epl" to listOf("epl", "premier league"),
             "usa.1" to listOf("mls", "soccer")
         )
         leagueAliases[event.league].orEmpty().forEach { if (haystack.contains(it)) score += 2 }
