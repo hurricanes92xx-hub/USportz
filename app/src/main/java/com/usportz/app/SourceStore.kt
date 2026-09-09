@@ -28,6 +28,14 @@ class SourceStore(private val context: Context) {
         get() = prefs.getString("playlist", "").orEmpty()
         private set(value) { prefs.edit().putString("playlist", value).apply() }
 
+    /** Used only by the local, one-time phone-to-TV pairing flow. */
+    fun importPairedSource(base: String, username: String, password: String, m3u: String) {
+        server = SportsChannelBridge.normalizeXtreamServer(base)
+        user = username.trim()
+        pass = password
+        playlist = m3u.trim()
+    }
+
     fun saveXtream(base: String, username: String, password: String, done: (Boolean, String) -> Unit, progress: (String) -> Unit = {}) {
         val cleanUser = username.trim()
         val cleanPass = password
@@ -71,7 +79,7 @@ class SourceStore(private val context: Context) {
         private const val PREFS_NAME = "usportz"
         private fun securePrefs(context: Context) = runCatching {
             val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
-            EncryptedSharedPreferences.create(context, PREFS_NAME, masterKey, EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV, EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+            EncryptedSharedPreferences.create(context, PREFS_NAME, masterKey, MasterKey.PrefKeyEncryptionScheme.AES256_SIV, MasterKey.PrefValueEncryptionScheme.AES256_GCM)
         }.getOrElse { throw IllegalStateException("Secure credential storage unavailable", it) }
     }
 }
