@@ -29,24 +29,31 @@ class SourceStore(private val context: Context) {
         private set(value) { prefs.edit().putString("playlist", value).apply() }
 
     fun saveXtream(base: String, username: String, password: String, done: (Boolean, String) -> Unit, progress: (String) -> Unit = {}) {
-        val cleanUser = username.trim(); val cleanPass = password
+        val cleanUser = username.trim()
+        val cleanPass = password
         val normalizedServer = SportsChannelBridge.normalizeXtreamServer(base)
         if (normalizedServer.isBlank() || cleanUser.isBlank() || cleanPass.isBlank()) {
             main.post { done(false, "Enter a valid Xtream server, username and password") }
             return
         }
         io.launch {
-            main.post { progress("Authenticating Xtream…") }
-            if (!SportsChannelBridge.validateXtream(normalizedServer, cleanUser, cleanPass)) {
-                main.post { done(false, "Xtream login failed — check the server URL, username and password") }
+            main.post { progress("Testing Xtream server…") }
+            val workingServer = SportsChannelBridge.authenticateXtream(normalizedServer, cleanUser, cleanPass)
+            if (workingServer.isNullOrBlank()) {
+                main.post { done(false, "Xtream login failed — server, username or password was rejected") }
                 return@launch
             }
-            server = normalizedServer; user = cleanUser; pass = cleanPass; playlist = ""
-            main.post { progress("Connected • indexing channels in background…"); done(true, "Connected • indexing started") }
-            io.launch {
-                runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
-                    .onSuccess { channels -> main.post { progress("Indexed ${channels.size} channels"); done(true, "Connected • ${channels.size} channels indexed") } }
-                    .onFailure { error -> main.post { progress("Connected • indexing retry needed"); done(true, "Connected • indexing failed: ${error.message ?: "source error"}") } }
+            server = workingServer
+            user = cleanUser
+            pass = cleanPass
+            playlist = ""
+            main.post { progress("Authenticated • loading live channels…") }
+            val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
+            val channels = result.getOrDefault(emptyList())
+            if (channels.isNotEmpty()) {
+                main.post { progress("Connected • ${channels.size} channels loaded"); done(true, "Connected • ${channels.size} channels loaded") }
+            } else {
+                main.post { done(false, "Login succeeded, but the provider returned no live channels") }
             }
         }
     }
@@ -54,7 +61,8 @@ class SourceStore(private val context: Context) {
     fun saveM3u(url: String, done: (Boolean, String) -> Unit) {
         playlist = url.trim(); server = ""; user = ""; pass = ""
         io.launch {
-            val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }; val channels = result.getOrDefault(emptyList())
+            val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
+            val channels = result.getOrDefault(emptyList())
             main.post { if (channels.isNotEmpty()) done(true, "Connected • ${channels.size} channels indexed") else done(false, result.exceptionOrNull()?.message?.let { "Source error: $it" } ?: "Source returned no channels") }
         }
     }
