@@ -14,7 +14,6 @@ import java.time.LocalDate
 /**
  * Secondary schedule provider using TheSportsDB's free v1 day schedule endpoint.
  * It fills gaps for sports where ESPN's public scoreboard is incomplete or inconsistent.
- * The free API is limited, so this layer is deliberately scoped to high-value uncovered sports.
  */
 object DedicatedSchedule {
     private const val API = "https://www.thesportsdb.com/api/v1/json/123/eventsday.php"
@@ -88,10 +87,10 @@ object DedicatedSchedule {
     }
 
     private fun normalizeState(status: String): String {
-        val s = status.lowercase()
+        val s = status.lowercase().trim()
         return when {
             s.contains("finish") || s.contains("complete") || s == "post" -> "post"
-            s.contains("live") || s.matches(Regex("\u005c\u005cd+[HhQq].*")) || s == "in" -> "in"
+            s.contains("live") || s == "in" || (s.firstOrNull()?.isDigit() == true) -> "in"
             else -> "pre"
         }
     }
