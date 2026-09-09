@@ -4,17 +4,22 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Clean USportz mark: bold U, dynamic play/lightning cut, and speed accent. -->
+
+    <!-- USportz: a clean, compact U monogram with a forward-motion slash. -->
     <path
-        android:fillColor="#F7FAFF"
-        android:pathData="M27,25 L39,25 L39,56 Q39,68 54,68 Q69,68 69,56 L69,25 L81,25 L81,57 Q81,80 54,80 Q27,80 27,57 Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,24 L40,24 L40,56 Q40,69 54,69 Q68,69 68,56 L68,24 L80,24 L80,57 Q80,81 54,81 Q28,81 28,57 Z" />
+
+    <!-- Forward slash / play accent: reads as speed and action at launcher size. -->
     <path
         android:fillColor="#20C8FF"
-        android:pathData="M58,33 L76,33 L66,48 L78,48 L53,72 L58,54 L46,54 Z" />
+        android:pathData="M61,25 L78,25 L69,40 L80,40 L55,68 L60,49 L50,49 Z" />
+
+    <!-- Small broadcast/speed cuts keep the mark energetic without clutter. -->
     <path
         android:fillColor="#147BFF"
-        android:pathData="M18,67 Q31,60 44,62 L40,69 Q29,68 20,74 Z" />
+        android:pathData="M20,66 L39,66 L35,72 L19,72 Z" />
     <path
         android:fillColor="#20C8FF"
-        android:pathData="M14,77 Q28,70 39,72 L34,78 Q25,77 16,83 Z" />
+        android:pathData="M17,76 L35,76 L31,82 L16,82 Z" />
 </vector>
