@@ -3,17 +3,18 @@ package com.usportz.app
 /**
  * Real artwork resolver for league and event surfaces.
  *
- * The first-party schedule payload remains authoritative for team/league artwork.
- * Curated brand assets are used when a feed does not provide artwork (notably
- * wrestling and motorsport brands). Coil provides HTTP caching on-device.
+ * First-party feed artwork remains authoritative. These curated fallbacks prevent blank cards
+ * when a provider omits league/team artwork, especially for wrestling and motorsports.
  */
 object BrandAssets {
     private const val COMMONS = "https://commons.wikimedia.org/wiki/Special:Redirect/file/"
 
     private val brandLogos = mapOf(
         "nfl" to "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
+        "ncaa-football" to "https://a.espncdn.com/i/teamlogos/leagues/500/college-football.png",
         "nba" to "https://a.espncdn.com/i/teamlogos/leagues/500/nba.png",
         "wnba" to "https://a.espncdn.com/i/teamlogos/leagues/500/wnba.png",
+        "ncaa-basketball" to "https://a.espncdn.com/i/teamlogos/leagues/500/mens-college-basketball.png",
         "mlb" to "https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png",
         "nhl" to "https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png",
         "mls" to "https://a.espncdn.com/i/teamlogos/leagues/500/mls.png",
@@ -22,7 +23,15 @@ object BrandAssets {
         "wwe" to COMMONS + "WWElogo2014.png",
         "aew" to COMMONS + "All_Elite_Wrestling_logo_2023.png",
         "tna" to COMMONS + "TNA-logo-June-2024-v2.png",
-        "roh" to COMMONS + "Ring_of_Honor_Logo_Final%281%29.png"
+        "roh" to COMMONS + "Ring_of_Honor_Logo_Final%281%29.png",
+        "nascar" to COMMONS + "NASCAR_Logo.svg.png",
+        "indycar" to COMMONS + "IndyCar_Series_logo.svg.png",
+        "f1" to COMMONS + "Formula_1.svg.png",
+        "motogp" to COMMONS + "Moto_Gp_logo.svg.png",
+        "monster-jam" to COMMONS + "Monster_Jam_logo.svg.png",
+        "boxing" to COMMONS + "Boxing_Pictogram.svg.png",
+        "tennis" to COMMONS + "Tennis_pictogram.svg.png",
+        "golf" to COMMONS + "Golf_pictogram.svg.png"
     )
 
     private val eventLogos = listOf(
@@ -38,8 +47,6 @@ object BrandAssets {
 
     fun eventLogoUrl(event: SportsEvent, brand: SportsBrand?): String? {
         val title = "${event.name} ${event.shortName}".lowercase()
-        return eventLogos.firstOrNull { (key, token, _) ->
-            key == brand?.key && title.contains(token)
-        }?.third
+        return eventLogos.firstOrNull { (key, token, _) -> key == brand?.key && title.contains(token) }?.third
     }
 }
