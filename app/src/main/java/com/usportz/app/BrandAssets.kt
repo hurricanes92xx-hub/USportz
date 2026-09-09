@@ -1,20 +1,15 @@
 package com.usportz.app
 
-/**
- * Real artwork resolver for league and event surfaces.
- *
- * First-party feed artwork remains authoritative. These curated fallbacks prevent blank cards
- * when a provider omits league/team artwork, especially for wrestling and motorsports.
- */
+/** Real artwork resolver for league and event surfaces. */
 object BrandAssets {
     private const val COMMONS = "https://commons.wikimedia.org/wiki/Special:Redirect/file/"
 
     private val brandLogos = mapOf(
         "nfl" to "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png",
-        "ncaa-football" to "https://a.espncdn.com/i/teamlogos/leagues/500/college-football.png",
+        "ncaa-football" to "https://www.ncaa.com/modules/custom/casablanca_core/img/sportbanners/football.png",
         "nba" to "https://a.espncdn.com/i/teamlogos/leagues/500/nba.png",
         "wnba" to "https://a.espncdn.com/i/teamlogos/leagues/500/wnba.png",
-        "ncaa-basketball" to "https://a.espncdn.com/i/teamlogos/leagues/500/mens-college-basketball.png",
+        "ncaa-basketball" to "https://www.ncaa.com/modules/custom/casablanca_core/img/sportbanners/basketball-men.svg",
         "mlb" to "https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png",
         "nhl" to "https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png",
         "mls" to "https://a.espncdn.com/i/teamlogos/leagues/500/mls.png",
@@ -35,18 +30,10 @@ object BrandAssets {
     )
 
     private val eventLogos = listOf(
-        Triple("wwe", "raw", COMMONS + "RAW.png"),
-        Triple("wwe", "smackdown", COMMONS + "SmackDown_2019.png"),
-        Triple("wwe", "nxt", COMMONS + "NXT_LOGO.png"),
-        Triple("aew", "dynamite", COMMONS + "AEW_Dynamite_logo_%28simplified%29.jpg"),
-        Triple("aew", "double or nothing", COMMONS + "AEW_Double_or_Nothing_logo.png"),
-        Triple("aew", "battle of the belts", COMMONS + "AEW_Battle_of_the_Belts_logo.png")
+        Triple("wwe", "raw", COMMONS + "RAW.png"), Triple("wwe", "smackdown", COMMONS + "SmackDown_2019.png"), Triple("wwe", "nxt", COMMONS + "NXT_LOGO.png"),
+        Triple("aew", "dynamite", COMMONS + "AEW_Dynamite_logo_%28simplified%29.jpg"), Triple("aew", "double or nothing", COMMONS + "AEW_Double_or_Nothing_logo.png"), Triple("aew", "battle of the belts", COMMONS + "AEW_Battle_of_the_Belts_logo.png")
     )
 
     fun logoUrl(brand: SportsBrand?): String? = brand?.let { brandLogos[it.key] }
-
-    fun eventLogoUrl(event: SportsEvent, brand: SportsBrand?): String? {
-        val title = "${event.name} ${event.shortName}".lowercase()
-        return eventLogos.firstOrNull { (key, token, _) -> key == brand?.key && title.contains(token) }?.third
-    }
+    fun eventLogoUrl(event: SportsEvent, brand: SportsBrand?): String? { val title = "${event.name} ${event.shortName}".lowercase(); return eventLogos.firstOrNull { (key, token, _) -> key == brand?.key && title.contains(token) }?.third }
 }
