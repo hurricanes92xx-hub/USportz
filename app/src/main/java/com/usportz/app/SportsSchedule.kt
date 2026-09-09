@@ -6,7 +6,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Public scoreboard integration with short-lived caching for fast TV/mobile startup. */
+/** Public scoreboard integration enriched by the user's Xtream/M3U channel inventory. */
 data class SportsEvent(
     val id: String,
     val sport: String,
@@ -37,9 +37,11 @@ object SportsSchedule {
         Feed("mma", "ufc")
     )
 
-    suspend fun load(forceRefresh: Boolean = false): List<SportsEvent> = withContext(Dispatchers.IO) {
+    suspend fun load(forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        if (!forceRefresh && cached.isNotEmpty() && now - cachedAt < CACHE_TTL_MS) return@withContext cached
+        if (!forceRefresh && cached.isNotEmpty() && now - cachedAt < CACHE_TTL_MS) {
+            return@withContext prioritizeSourceMatches(cached, sourceChannels)
+        }
 
         val fresh = feeds.flatMap { feed -> fetch(feed) }
             .distinctBy { it.id }
@@ -49,9 +51,9 @@ object SportsSchedule {
         if (fresh.isNotEmpty()) {
             cached = fresh
             cachedAt = now
-            fresh
+            prioritizeSourceMatches(fresh, sourceChannels)
         } else {
-            cached
+            prioritizeSourceMatches(cached, sourceChannels)
         }
     }
 
@@ -62,6 +64,22 @@ object SportsSchedule {
     fun upcomingEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state != "in" && it.state != "post" }
     fun forSport(events: List<SportsEvent>, sport: String): List<SportsEvent> =
         if (sport.isBlank() || sport == "All") events else events.filter { SportsCatalog.classify(it.name, it.league) == sport || it.sport.equals(sport, true) }
+
+    private fun prioritizeSourceMatches(events: List<SportsEvent>, channels: List<SportsChannel>): List<SportsEvent> {
+        if (events.isEmpty() || channels.isEmpty()) return events
+        return events.sortedWith(
+            compareByDescending<SportsEvent> { sourceMatchScore(it, channels) > 0 }
+                .thenByDescending { sourceMatchScore(it, channels) }
+                .thenByDescending { it.state == "in" }
+                .thenBy { it.startTime }
+        )
+    }
+
+    /** Positive score means the Xtream/M3U inventory contains a plausible channel for this event. */
+    fun sourceMatchScore(event: SportsEvent, channels: List<SportsChannel>): Int =
+        channels.asSequence()
+            .map { matchChannel(event, it.name, it.group) }
+            .maxOrNull() ?: 0
 
     private fun fetch(feed: Feed): List<SportsEvent> {
         val url = "https://site.api.espn.com/apis/site/v2/sports/${feed.sport}/${feed.league}/scoreboard"
@@ -125,17 +143,23 @@ object SportsSchedule {
     }
 
     fun matchChannel(event: SportsEvent, channelName: String, group: String): Int {
-        val haystack = "$channelName $group".lowercase()
-        val tokens = buildList {
-            add(event.league.lowercase())
-            add(event.sport.lowercase())
-            event.competitors.forEach { add(it.lowercase()) }
-        }
+        val haystack = normalize("$channelName $group")
+        val eventLeague = normalize(event.league)
+        val eventSport = normalize(event.sport)
         var score = 0
-        tokens.filter { it.length >= 4 }.forEach { token ->
-            if (haystack.contains(token)) score += if (token == event.league.lowercase()) 4 else 3
+
+        if (eventLeague.isNotBlank() && haystack.contains(eventLeague)) score += 5
+        if (eventSport.isNotBlank() && haystack.contains(eventSport)) score += 2
+
+        event.competitors.forEach { team ->
+            val normalized = normalize(team)
+            if (normalized.length >= 4 && haystack.contains(normalized)) score += 5
+            team.split(Regex("[^A-Za-z0-9]+"))
+                .filter { it.length >= 4 }
+                .forEach { token -> if (haystack.contains(token.lowercase())) score += 2 }
         }
-        val leagueAliases = mapOf(
+
+        val aliases = mapOf(
             "nfl" to listOf("nfl", "football"),
             "nba" to listOf("nba", "basketball"),
             "wnba" to listOf("wnba", "basketball"),
@@ -147,7 +171,15 @@ object SportsSchedule {
             "ncaa football" to listOf("ncaa", "college football", "football"),
             "ncaa basketball" to listOf("ncaa", "college basketball", "basketball")
         )
-        leagueAliases[event.league.lowercase()].orEmpty().forEach { if (haystack.contains(it)) score += 2 }
+        aliases[eventLeague].orEmpty().forEach { alias -> if (haystack.contains(normalize(alias))) score += 2 }
+
+        if (event.broadcast.isNotBlank() && haystack.contains(normalize(event.broadcast))) score += 4
         return score
     }
+
+    private fun normalize(value: String): String =
+        value.lowercase()
+            .replace("&", " and ")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
 }
