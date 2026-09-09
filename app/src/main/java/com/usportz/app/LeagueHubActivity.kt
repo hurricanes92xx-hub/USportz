@@ -1,5 +1,6 @@
 package com.usportz.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -64,6 +65,7 @@ private fun LeagueHub(key: String, back: () -> Unit) {
 
 @Composable
 private fun LeagueEvent(event: SportsEvent, channels: List<SportsChannel>, favs: Favs) {
+    val context = LocalContext.current
     val channel = SportsChannelBridge.bestMatch(event, channels)
     Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
         Column(Modifier.padding(10.dp)) {
@@ -74,9 +76,26 @@ private fun LeagueEvent(event: SportsEvent, channels: List<SportsChannel>, favs:
             }
             Text(SportsPresentation.matchup(event), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 7.dp))
             Text(event.detail.ifBlank { if (event.state == "in") "LIVE NOW" else "Scheduled" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 TextButton(onClick = { favs.toggleEvent(event.id) }) { Text(if (favs.isEventFav(event.id)) "★ SAVED" else "☆ SAVE") }
-                if (channel != null) Text(channel.name, modifier = Modifier.padding(start = 8.dp))
+                if (channel != null) {
+                    Button(onClick = {
+                        context.startActivity(
+                            Intent(context, RichPlayerActivity::class.java)
+                                .putExtra(RichPlayerActivity.EXTRA_URL, channel.url)
+                        )
+                    }) {
+                        Text("WATCH LIVE")
+                    }
+                }
+            }
+            if (channel != null) {
+                Text(
+                    channel.name,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
         }
     }
