@@ -50,7 +50,6 @@ object SportsChannelBridge {
         val candidates = normalizedServerCandidates(server)
         if (candidates.isEmpty()) return false
 
-        var explicitAuthFailure = false
         for (base in candidates) {
             val apiUrl = "$base/player_api.php?$query"
             val apiResult = runCatching { request(apiUrl, 6_000) }.getOrNull()
@@ -58,14 +57,9 @@ object SportsChannelBridge {
                 val json = runCatching { JSONObject(apiResult) }.getOrNull()
                 if (json != null) {
                     val info = json.optJSONObject("user_info")
-                    val auth = info?.optString("auth")?.trim()
-                        ?: json.optString("auth").trim()
+                    val auth = info?.optString("auth")?.trim() ?: json.optString("auth").trim()
                     val status = clean(info?.optString("status") ?: json.optString("status"))
                     if (auth == "1" || status.equals("Active", true) || status.equals("Enabled", true)) return true
-                    if (auth == "0" || status.equals("Invalid", true) || status.equals("Expired", true) || status.equals("Disabled", true) || status.equals("Banned", true)) {
-                        explicitAuthFailure = true
-                        continue
-                    }
                 } else if (apiResult.contains("#EXTM3U", true) || apiResult.contains("#EXTINF", true)) {
                     return true
                 }
@@ -77,23 +71,16 @@ object SportsChannelBridge {
             val playlistOk = runCatching {
                 val conn = URL(playlistUrl).openConnection() as HttpURLConnection
                 try {
-                    conn.connectTimeout = 4_000
-                    conn.readTimeout = 8_000
-                    conn.instanceFollowRedirects = true
-                    conn.requestMethod = "GET"
-                    conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
-                    conn.setRequestProperty("Accept-Encoding", "gzip")
-                    conn.setRequestProperty("User-Agent", "USportz/1.4")
+                    conn.connectTimeout = 4_000; conn.readTimeout = 8_000; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"
+                    conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*"); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USportz/1.4")
                     if (conn.responseCode !in 200..299) return@runCatching false
                     val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
                     stream.bufferedReader().use { reader ->
-                        var seen = 0
                         var chars = 0
                         while (chars < 256 * 1024) {
                             val line = reader.readLine() ?: break
                             chars += line.length + 1
-                            if (line.contains("#EXTM3U", true) || line.contains("#EXTINF", true)) seen++
-                            if (seen >= 1) return@use true
+                            if (line.contains("#EXTM3U", true) || line.contains("#EXTINF", true)) return@use true
                         }
                         false
                     }
@@ -101,7 +88,12 @@ object SportsChannelBridge {
             }.getOrDefault(false)
             if (playlistOk) return true
         }
-        return !explicitAuthFailure && false
+        return false
+    }
+
+    /** Normalize user-entered Xtream portal text to the base URL used by all requests. */
+    fun normalizeXtreamServer(server: String): String {
+        return normalizedServerCandidates(server).firstOrNull().orEmpty()
     }
 
     /** Return portal roots without leaking or persisting credentials. */
@@ -129,13 +121,8 @@ object SportsChannelBridge {
     private fun request(url: String, timeout: Int): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         return try {
-            conn.connectTimeout = 4_000
-            conn.readTimeout = timeout
-            conn.instanceFollowRedirects = true
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Accept", "application/json, text/plain, */*")
-            conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.4")
+            conn.connectTimeout = 4_000; conn.readTimeout = timeout; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"
+            conn.setRequestProperty("Accept", "application/json, text/plain, */*"); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USportz/1.4")
             if (conn.responseCode !in 200..299) return ""
             val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
             stream.bufferedReader().use { it.readText().take(128_000) }
@@ -144,7 +131,7 @@ object SportsChannelBridge {
 
     suspend fun load(context: Context, forceRefresh: Boolean = false): List<SportsChannel> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis(); if (cached.isEmpty()) restoreCached(context)
-        val sourceConfig = SourceStore(context); val server = sourceConfig.server.trimEnd('/'); val user = sourceConfig.user; val pass = sourceConfig.pass; val playlist = sourceConfig.playlist
+        val sourceConfig = SourceStore(context); val server = normalizeXtreamServer(sourceConfig.server); val user = sourceConfig.user; val pass = sourceConfig.pass; val playlist = sourceConfig.playlist
         val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
         if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt in 0 until CACHE_TTL_MS) return@withContext cached
         if (!indexing.compareAndSet(false, true)) return@withContext cached
