@@ -1,5 +1,6 @@
 package com.usportz.app
 
+import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -9,7 +10,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Public scoreboard integration enriched by the user's Xtream/M3U channel inventory. */
+/** Public scoreboard integration enriched by Xtream/M3U channels and optional licensed TV metadata. */
 data class SportsEvent(
     val id: String,
     val sport: String,
@@ -43,22 +44,23 @@ object SportsSchedule {
         Feed("racing", "formula-1"), Feed("racing", "indycar"), Feed("racing", "motogp"), Feed("tennis", "atp"), Feed("tennis", "wta")
     )
 
-    suspend fun load(forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = withContext(Dispatchers.IO) {
+    suspend fun load(context: Context, forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val source = if (sourceChannels.isNotEmpty()) sourceChannels else SportsChannelBridge.cachedChannels()
         if (!forceRefresh && cached.isNotEmpty() && now - cachedAt < CACHE_TTL_MS) return@withContext prioritizeSourceMatches(cached, source)
 
-        val (espn, dedicated) = coroutineScope {
+        val (espn, dedicated, tv) = coroutineScope {
             val espnJob = async(Dispatchers.IO) {
                 feeds.map { feed -> async(Dispatchers.IO) { fetch(feed) } }.awaitAll().flatten()
             }
             val dedicatedJob = async(Dispatchers.IO) { DedicatedSchedule.load() }
-            espnJob.await() to dedicatedJob.await()
+            val tvJob = async(Dispatchers.IO) { RoninTvSchedule.load(context) }
+            Triple(espnJob.await(), dedicatedJob.await(), tvJob.await())
         }
-        val fresh = (espn + dedicated)
+        val fresh = (espn + dedicated + tv)
             .distinctBy { it.id }
             .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { it.startTime })
-            .take(800)
+            .take(1000)
 
         if (fresh.isNotEmpty()) {
             cached = fresh
