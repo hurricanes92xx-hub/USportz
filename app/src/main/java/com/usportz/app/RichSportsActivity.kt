@@ -41,9 +41,7 @@ class RichSportsActivity : ComponentActivity() {
         setContent { RichSportsApp() }
     }
 
-    fun openSourceApp() {
-        startActivity(Intent(this, MainActivity::class.java))
-    }
+    fun openSourceApp() = startActivity(Intent(this, MainActivity::class.java))
 }
 
 private val Ink = Color(0xFF080A12)
@@ -52,6 +50,8 @@ private val Panel2 = Color(0xFF181B2A)
 private val Purple = Color(0xFF9B5CFF)
 private val Cyan = Color(0xFF14D9FF)
 private val Pink = Color(0xFFFF3E91)
+
+private data class BrandTile(val key: String, val label: String, val short: String)
 
 @Composable
 private fun RichSportsApp() {
@@ -79,15 +79,15 @@ private fun RichSportsApp() {
     val filtered = SportsSchedule.forSport(events, selectedSport)
     val live = SportsSchedule.liveEvents(filtered)
     val upcoming = SportsSchedule.upcomingEvents(filtered)
+    val featured = live.firstOrNull() ?: upcoming.firstOrNull()
+    val wrestling = events.filter {
+        SportsCatalog.classify(it.name, it.league) == "Wrestling"
+    }.take(6)
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Cyan, secondary = Purple, background = Ink, surface = Panel)) {
         Scaffold(
             containerColor = Ink,
-            bottomBar = {
-                RichBottomBar(tab) {
-                    if (it >= 2) activity.openSourceApp() else tab = it
-                }
-            }
+            bottomBar = { RichBottomBar(tab) { if (it >= 2) activity.openSourceApp() else tab = it } }
         ) { pad ->
             LazyColumn(
                 Modifier.fillMaxSize().padding(pad),
@@ -95,25 +95,24 @@ private fun RichSportsApp() {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 item { RichHeader(onRefresh = ::refresh, loading = loading, onSources = activity::openSourceApp) }
-                item { NoticeStrip() }
-                item { BrandRail(selectedSport) { selectedSport = it } }
+                item { NoticeStrip(loading = loading, cached = SportsSchedule.isCacheFresh()) }
+                if (featured != null) item { FeaturedEvent(event = featured, onWatch = activity::openSourceApp) }
+                item { BrandRail(events = events, selected = selectedSport) { selectedSport = it } }
                 item { ModeRail(selectedMode) { selectedMode = it } }
 
                 if (selectedMode == "Live now") {
                     item { SectionTitle("LIVE NOW", "${live.size} events", Pink) }
-                    items(live, key = { "live-${it.id}" }) { RichEventCard(it, true) }
+                    items(live, key = { "live-${it.id}" }) { RichEventCard(it, true, activity::openSourceApp) }
                 } else {
                     if (live.isNotEmpty()) {
                         item { SectionTitle("LIVE NOW", "${live.size} on air", Pink) }
-                        items(live.take(5), key = { "live-${it.id}" }) { RichEventCard(it, true) }
+                        items(live.take(8), key = { "live-${it.id}" }) { RichEventCard(it, true, activity::openSourceApp) }
                     }
-                    if (selectedMode != "Today's") {
-                        item { SectionTitle("COMING UP", "${upcoming.size} events", Cyan) }
-                        items(upcoming.take(18), key = { "up-${it.id}" }) { RichEventCard(it, false) }
-                    } else {
-                        item { SectionTitle("TODAY'S SCHEDULE", "${upcoming.size} events", Cyan) }
-                        items(upcoming.take(18), key = { "today-${it.id}" }) { RichEventCard(it, false) }
+                    if (selectedSport == "All" && wrestling.isNotEmpty()) {
+                        item { WrestlingSpotlight(wrestling, activity::openSourceApp) }
                     }
+                    item { SectionTitle(if (selectedMode == "Today's") "TODAY'S SCHEDULE" else "COMING UP", "${upcoming.size} events", Cyan) }
+                    items(upcoming.take(20), key = { "up-${it.id}" }) { RichEventCard(it, false, activity::openSourceApp) }
                 }
                 if (!loading && live.isEmpty() && upcoming.isEmpty()) item { EmptyRich() }
             }
@@ -138,27 +137,47 @@ private fun RichHeader(onRefresh: () -> Unit, loading: Boolean, onSources: () ->
 }
 
 @Composable
-private fun NoticeStrip() {
+private fun NoticeStrip(loading: Boolean, cached: Boolean) {
     Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(22.dp), color = Color(0xFF151823), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF292D3B))) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("◉", color = Cyan, fontSize = 17.sp)
+            Text("●", color = if (loading) Purple else Cyan, fontSize = 13.sp)
             Spacer(Modifier.width(10.dp))
-            Text("Live schedule • scores • channels", color = Color(0xFFE7E9F1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (loading) "Updating schedule…" else "Live schedule • scores • channels", color = Color(0xFFE7E9F1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
-            Text("AUTO", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+            Text(if (cached) "FAST" else "LIVE", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
         }
     }
 }
 
 @Composable
-private fun BrandRail(selected: String, onSelected: (String) -> Unit) {
-    val brands = listOf("All" to "ALL", "Football" to "NFL", "Basketball" to "NBA", "Baseball" to "MLB", "Hockey" to "NHL", "Soccer" to "⚽", "MMA" to "UFC", "Wrestling" to "WWE", "Tennis" to "TNS", "Golf" to "GOLF", "Motorsports" to "RACE")
+private fun FeaturedEvent(event: SportsEvent, onWatch: () -> Unit) {
+    val live = event.state == "in"
+    Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(190.dp).clip(RoundedCornerShape(24.dp)).border(1.dp, Brush.linearGradient(listOf(Purple, Cyan, Pink)), RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF231642), Color(0xFF101A2A), Color(0xFF160D1A)))).clickable { if (live) onWatch() }) {
+        if (!event.leagueLogo.isNullOrBlank()) AsyncImage(event.leagueLogo, event.league, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.20f)
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xDD080A12)))))
+        Column(Modifier.align(Alignment.BottomStart).padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.background(if (live) Pink else Purple, RoundedCornerShape(14.dp)).padding(horizontal = 9.dp, vertical = 5.dp)) { Text(if (live) "LIVE NOW" else "FEATURED", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) }
+                Spacer(Modifier.width(9.dp))
+                Text(event.league.uppercase(), color = Color(0xFFCFD5E5), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(SportsPresentation.matchup(event), color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+            Text(if (live) event.detail.ifBlank { "Watch the live event" } else formatClock(event.startTime), color = Color(0xFFAEB6C9), fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+        }
+        if (live) Icon(Icons.Default.PlayCircle, "Watch live", tint = Cyan, modifier = Modifier.align(Alignment.TopEnd).padding(18.dp).size(38.dp))
+    }
+}
+
+@Composable
+private fun BrandRail(events: List<SportsEvent>, selected: String, onSelected: (String) -> Unit) {
+    val keys = listOf("All" to "ALL", "Football" to "NFL", "Basketball" to "NBA", "Baseball" to "MLB", "Hockey" to "NHL", "Soccer" to "⚽", "MMA" to "UFC", "Wrestling" to "WWE", "Tennis" to "TNS", "Golf" to "GOLF", "Motorsports" to "RACE")
     LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(brands) { (key, label) ->
+        items(keys) { (key, label) ->
             val active = selected == key
+            val logo = events.firstOrNull { SportsCatalog.classify(it.name, it.league) == key && !it.leagueLogo.isNullOrBlank() }?.leagueLogo
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(72.dp).clickable { onSelected(key) }) {
                 Box(Modifier.size(58.dp).shadow(if (active) 8.dp else 0.dp, CircleShape).background(if (active) Brush.linearGradient(listOf(Purple, Cyan)) else Brush.linearGradient(listOf(Color(0xFF202433), Color(0xFF10131D))), CircleShape).border(1.dp, if (active) Cyan else Color(0xFF303546), CircleShape), contentAlignment = Alignment.Center) {
-                    Text(label, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = if (label.length > 4) 9.sp else 13.sp)
+                    if (!logo.isNullOrBlank()) AsyncImage(logo, key, Modifier.size(39.dp), contentScale = ContentScale.Fit) else Text(label, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = if (label.length > 4) 9.sp else 13.sp)
                 }
                 Text(key, color = if (active) Color.White else Color(0xFF858DA2), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
             }
@@ -188,18 +207,40 @@ private fun SectionTitle(title: String, count: String, accent: Color) {
 }
 
 @Composable
-private fun RichEventCard(event: SportsEvent, live: Boolean) {
+private fun WrestlingSpotlight(events: List<SportsEvent>, onWatch: () -> Unit) {
+    Column {
+        SectionTitle("WRESTLING", "WWE • AEW • TNA • ROH", Purple)
+        LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(events, key = { "wrestle-${it.id}" }) { event ->
+                Box(Modifier.width(245.dp).height(112.dp).clip(RoundedCornerShape(18.dp)).background(Brush.linearGradient(listOf(Color(0xFF241735), Color(0xFF151A29)))).border(1.dp, Color(0xFF3B3152), RoundedCornerShape(18.dp)).clickable { if (event.state == "in") onWatch() }) {
+                    if (!event.leagueLogo.isNullOrBlank()) AsyncImage(event.leagueLogo, event.league, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.22f)
+                    Column(Modifier.padding(14.dp)) {
+                        Text(event.league.uppercase(), color = Purple, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(SportsPresentation.matchup(event), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
+                        Text(if (event.state == "in") "● LIVE" else formatClock(event.startTime), color = if (event.state == "in") Pink else Color(0xFF8991A7), fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RichEventCard(event: SportsEvent, live: Boolean, onWatch: () -> Unit) {
     val borderBrush = Brush.linearGradient(listOf(Purple, Color(0xFF4B1F6F), Cyan))
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp).border(1.5.dp, borderBrush, RoundedCornerShape(20.dp)), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column {
-            if (!event.leagueLogo.isNullOrBlank()) {
-                Box(Modifier.fillMaxWidth().height(54.dp).background(Brush.horizontalGradient(listOf(Color(0xFF1C1630), Color(0xFF0E1924))))) {
-                    AsyncImage(event.leagueLogo, event.league, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.35f)
-                    Row(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(event.leagueLogo, event.league, Modifier.size(28.dp), contentScale = ContentScale.Fit)
-                        Spacer(Modifier.width(9.dp))
-                        Text("${event.league.uppercase()}  •  ${event.name}", color = Color(0xFFD7DBE7), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Box(Modifier.fillMaxWidth().height(58.dp).background(Brush.horizontalGradient(listOf(Color(0xFF1C1630), Color(0xFF0E1924))))) {
+                if (!event.leagueLogo.isNullOrBlank()) AsyncImage(event.leagueLogo, event.league, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.30f)
+                Row(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (!event.leagueLogo.isNullOrBlank()) AsyncImage(event.leagueLogo, event.league, Modifier.size(30.dp), contentScale = ContentScale.Fit)
+                    else Box(Modifier.size(30.dp).background(Purple, CircleShape), contentAlignment = Alignment.Center) { Text(event.league.take(2), fontSize = 9.sp, fontWeight = FontWeight.ExtraBold) }
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(event.league.uppercase(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(event.name, color = Color(0xFF9AA2B6), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    if (live) Text("● LIVE", color = Pink, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
             Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -215,17 +256,16 @@ private fun RichEventCard(event: SportsEvent, live: Boolean) {
                     TeamRow(event.competitors.getOrNull(1) ?: "TBD", event.competitorLogos.getOrNull(1))
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    if (live) Box(Modifier.background(Color(0x3322D9FF), RoundedCornerShape(20.dp)).padding(horizontal = 9.dp, vertical = 5.dp)) { Text("● LIVE", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) }
-                    else Text(SportsPresentation.status(event), color = Color(0xFF8E96AB), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(SportsPresentation.status(event), color = if (live) Cyan else Color(0xFF8E96AB), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     if (event.detail.isNotBlank()) Text(event.detail, color = Color(0xFF7C8498), fontSize = 10.sp, maxLines = 1, modifier = Modifier.padding(top = 5.dp))
                 }
             }
             Row(Modifier.fillMaxWidth().background(Color(0x22000000)).padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (event.broadcast.isBlank()) "Sports event" else event.broadcast, color = Color(0xFF8F98AD), fontSize = 11.sp, modifier = Modifier.weight(1f))
+                Text(if (event.broadcast.isBlank()) "Sports event" else event.broadcast, color = Color(0xFF8F98AD), fontSize = 11.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (live) {
                     Text("WATCH LIVE", color = Cyan, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                     Spacer(Modifier.width(5.dp))
-                    Icon(Icons.Default.PlayCircle, null, tint = Cyan, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.PlayCircle, null, tint = Cyan, modifier = Modifier.size(20.dp).clickable { onWatch() })
                 } else Text("EVENT", color = Color(0xFF8F98AD), fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
         }
