@@ -17,7 +17,7 @@ import java.util.zip.GZIPInputStream
 
 data class SportsChannel(val id: String, val name: String, val group: String, val logo: String?, val url: String)
 
-/** Xtream-compatible source bridge. Uses the real Player API first and M3U only as a fallback. */
+/** Xtream-compatible source bridge. Authentication and channel retrieval use several provider-compatible fallbacks. */
 object SportsChannelBridge {
     private const val CACHE_TTL_MS = 5 * 60 * 1000L
     private const val MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000L
@@ -53,22 +53,20 @@ object SportsChannelBridge {
         return cached
     }
 
-    /** Returns the first portal root that actually accepts the supplied credentials. */
     fun authenticateXtream(server: String, user: String, pass: String): String? {
-        val query = "username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}"
+        val query = credentialsQuery(user, pass)
         for (base in normalizedServerCandidates(server)) {
-            val apiResult = runCatching { request("$base/player_api.php?$query", 7_000) }.getOrNull()
-            if (!apiResult.isNullOrBlank()) {
-                val json = runCatching { JSONObject(apiResult) }.getOrNull()
+            for (endpoint in listOf("player_api.php", "panel_api.php")) {
+                val body = runCatching { request("$base/$endpoint?$query", 7_000) }.getOrNull().orEmpty()
+                val json = runCatching { JSONObject(body) }.getOrNull()
                 if (json != null) {
                     val info = json.optJSONObject("user_info")
-                    val auth = info?.optString("auth")?.trim() ?: json.optString("auth").trim()
+                    val auth = clean(info?.optString("auth") ?: json.optString("auth"))
                     val status = clean(info?.optString("status") ?: json.optString("status"))
                     if (auth == "1" || status.equals("Active", true) || status.equals("Enabled", true)) return base
-                    if (auth == "0" || status.equals("Invalid", true) || status.equals("Expired", true) || status.equals("Disabled", true) || status.equals("Banned", true)) continue
                 }
             }
-            if (probeM3u("$base/get.php?$query&type=m3u_plus&output=ts")) return base
+            if (probeM3u("$base/get.php?$query&type=m3u_plus&output=ts") || probeM3u("$base/get.php?$query&type=m3u_plus&output=m3u8")) return base
         }
         return null
     }
@@ -87,16 +85,17 @@ object SportsChannelBridge {
         val path = uri.path.orEmpty().trimEnd('/')
         val basePath = when {
             path.endsWith("/player_api.php", true) -> path.dropLast("/player_api.php".length).trimEnd('/')
+            path.endsWith("/panel_api.php", true) -> path.dropLast("/panel_api.php".length).trimEnd('/')
             path.endsWith("/get.php", true) -> path.dropLast("/get.php".length).trimEnd('/')
             path.endsWith("/xmltv.php", true) -> path.dropLast("/xmltv.php".length).trimEnd('/')
             else -> path
         }
-        val suffix = basePath.ifBlank { "" }
-        val root = "$scheme://$authority$suffix"
-        val alternateScheme = if (scheme == "https") "http" else "https"
-        val alternate = "$alternateScheme://$authority$suffix"
+        val root = "$scheme://$authority${basePath.ifBlank { "" }}"
+        val alternate = "${if (scheme == "https") "http" else "https"}://$authority${basePath.ifBlank { "" }}"
         return listOf(root, alternate).distinct()
     }
+
+    private fun credentialsQuery(user: String, pass: String): String = "username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}"
 
     private fun request(url: String, timeout: Int): String {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -107,7 +106,7 @@ object SportsChannelBridge {
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/json, text/plain, */*")
             conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.5")
+            conn.setRequestProperty("User-Agent", "USportz/1.6")
             if (conn.responseCode !in 200..299) return ""
             val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
             stream.bufferedReader().use { it.readText().take(8 * 1024 * 1024) }
@@ -123,7 +122,7 @@ object SportsChannelBridge {
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
             conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.5")
+            conn.setRequestProperty("User-Agent", "USportz/1.6")
             if (conn.responseCode !in 200..299) return@runCatching false
             val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
             stream.bufferedReader().use { reader ->
@@ -139,11 +138,11 @@ object SportsChannelBridge {
     suspend fun load(context: Context, forceRefresh: Boolean = false): List<SportsChannel> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         if (cached.isEmpty()) restoreCached(context)
-        val sourceConfig = SourceStore(context)
-        val server = normalizeXtreamServer(sourceConfig.server)
-        val user = sourceConfig.user
-        val pass = sourceConfig.pass
-        val playlist = sourceConfig.playlist
+        val source = SourceStore(context)
+        val server = normalizeXtreamServer(source.server)
+        val user = source.user
+        val pass = source.pass
+        val playlist = source.playlist
         val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
         if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt in 0 until CACHE_TTL_MS) return@withContext cached
         if (!indexing.compareAndSet(false, true)) return@withContext cached
@@ -156,8 +155,7 @@ object SportsChannelBridge {
                 }
                 if (result.isEmpty()) {
                     for (base in normalizedServerCandidates(server)) {
-                        val m3u = "$base/get.php?username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}&type=m3u_plus&output=ts"
-                        result = runCatching { fetchAndParse(m3u) }.getOrDefault(emptyList())
+                        result = fetchXtreamPlaylist(base, user, pass)
                         if (result.isNotEmpty()) break
                     }
                 }
@@ -176,21 +174,46 @@ object SportsChannelBridge {
     }
 
     private fun fetchLiveStreams(base: String, user: String, pass: String): List<SportsChannel> {
-        val query = "username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}&action=get_live_streams"
-        val body = request("$base/player_api.php?$query", 20_000)
-        val array = runCatching { JSONArray(body) }.getOrNull() ?: return emptyList()
-        return buildList(array.length()) {
-            for (i in 0 until array.length()) {
-                val item = array.optJSONObject(i) ?: continue
-                val id = clean(item.optString("stream_id"))
-                val name = clean(item.optString("name")).ifBlank { "Channel" }
-                if (id.isBlank()) continue
-                val group = clean(item.optString("category_name")).ifBlank { "Live TV" }
-                val logo = clean(item.optString("stream_icon")).ifBlank { null }
-                val url = "$base/live/$user/$pass/$id.m3u8"
-                add(SportsChannel(id, name, group, logo, url))
-            }
+        val query = "${credentialsQuery(user, pass)}&action=get_live_streams"
+        val bodies = listOf("$base/player_api.php?$query", "$base/panel_api.php?$query")
+        for (url in bodies) {
+            val body = runCatching { request(url, 20_000) }.getOrNull().orEmpty()
+            val array = runCatching { JSONArray(body) }.getOrNull()
+                ?: runCatching { JSONObject(body).optJSONArray("live_streams") }.getOrNull()
+                ?: continue
+            val result = parseLiveArray(array, base, user, pass)
+            if (result.isNotEmpty()) return result
         }
+        return emptyList()
+    }
+
+    private fun parseLiveArray(array: JSONArray, base: String, user: String, pass: String): List<SportsChannel> = buildList(array.length()) {
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            val id = clean(item.optString("stream_id")).ifBlank { clean(item.optString("id")) }
+            val name = clean(item.optString("name")).ifBlank { "Channel" }
+            if (id.isBlank()) continue
+            val group = clean(item.optString("category_name")).ifBlank { clean(item.optString("category")) }.ifBlank { "Live TV" }
+            val logo = clean(item.optString("stream_icon")).ifBlank { clean(item.optString("icon")) }.ifBlank { null }
+            val ext = clean(item.optString("container_extension")).ifBlank { "m3u8" }
+            val url = "$base/live/$user/$pass/$id.$ext"
+            add(SportsChannel(id, name, group, logo, url))
+        }
+    }
+
+    private fun fetchXtreamPlaylist(base: String, user: String, pass: String): List<SportsChannel> {
+        val query = credentialsQuery(user, pass)
+        val urls = listOf(
+            "$base/get.php?$query&type=m3u_plus&output=ts",
+            "$base/get.php?$query&type=m3u_plus&output=m3u8",
+            "$base/get.php?$query&type=m3u&output=ts",
+            "$base/get.php?$query&type=m3u&output=m3u8"
+        )
+        for (url in urls) {
+            val result = runCatching { fetchAndParse(url) }.getOrDefault(emptyList())
+            if (result.isNotEmpty()) return result
+        }
+        return emptyList()
     }
 
     fun cachedChannels(): List<SportsChannel> = cached
@@ -215,15 +238,15 @@ object SportsChannelBridge {
 
     private fun fetchAndParse(source: String): List<SportsChannel> {
         val conn = URL(source).openConnection() as HttpURLConnection
-        conn.connectTimeout = 6_000
-        conn.readTimeout = 60_000
-        conn.instanceFollowRedirects = true
-        conn.requestMethod = "GET"
-        conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
-        conn.setRequestProperty("Accept-Encoding", "gzip")
-        conn.setRequestProperty("User-Agent", "USportz/1.5")
         return try {
-            if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP ${conn.responseCode}")
+            conn.connectTimeout = 6_000
+            conn.readTimeout = 60_000
+            conn.instanceFollowRedirects = true
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
+            conn.setRequestProperty("Accept-Encoding", "gzip")
+            conn.setRequestProperty("User-Agent", "USportz/1.6")
+            if (conn.responseCode !in 200..299) return emptyList()
             val raw = conn.inputStream
             val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(raw) else raw
             stream.bufferedReader().use(::parse)
@@ -233,7 +256,7 @@ object SportsChannelBridge {
     private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
         val array = JSONArray()
         channels.forEach { c -> array.put(JSONObject().apply { put("id", c.id); put("name", c.name); put("group", c.group); put("logo", c.logo ?: ""); put("url", c.url) }) }
-        val root = JSONObject().apply { put("version", 3); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
+        val root = JSONObject().apply { put("version", 4); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
         val target = File(context.noBackupFilesDir, CACHE_FILE)
         val temp = File(context.noBackupFilesDir, "$CACHE_FILE.tmp")
         runCatching { temp.writeText(root.toString()); if (!temp.renameTo(target)) { target.delete(); temp.renameTo(target) } }
