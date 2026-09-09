@@ -79,7 +79,7 @@ class SourceStore(private val context: Context) {
         private const val PREFS_NAME = "usportz"
         private fun securePrefs(context: Context) = runCatching {
             val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
-            EncryptedSharedPreferences.create(context, PREFS_NAME, masterKey, MasterKey.PrefKeyEncryptionScheme.AES256_SIV, MasterKey.PrefValueEncryptionScheme.AES256_GCM)
+            EncryptedSharedPreferences.create(context, PREFS_NAME, masterKey, EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV, EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
         }.getOrElse { throw IllegalStateException("Secure credential storage unavailable", it) }
     }
 }
