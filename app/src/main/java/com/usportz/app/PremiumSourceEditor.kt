@@ -30,16 +30,21 @@ fun Editor(s: SourceStore, done: () -> Unit) {
             OutlinedTextField(pass, { pass = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Password") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
             Button(enabled = !busy && server.isNotBlank() && user.isNotBlank() && pass.isNotBlank(), onClick = {
                 busy = true
-                s.saveXtream(server, user, pass) { ok, msg -> busy = false; status = msg; if (ok) done() }
-            }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(if (busy) "CONNECTING…" else "CONNECT XTREAM") }
+                status = "Connecting to source…"
+                s.saveXtream(server, user, pass,
+                    done = { ok, msg -> busy = false; status = msg; if (ok) done() },
+                    progress = { message -> status = message }
+                )
+            }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(if (busy) "INDEXING…" else "CONNECT XTREAM") }
 
             HorizontalDivider(Modifier.padding(vertical = 13.dp))
             Text("M3U / M3U8", fontWeight = FontWeight.Black)
             OutlinedTextField(m3u, { m3u = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Playlist URL") }, singleLine = true)
             Button(enabled = !busy && m3u.isNotBlank(), onClick = {
                 busy = true
+                status = "Loading full playlist…"
                 s.saveM3u(m3u) { ok, msg -> busy = false; status = msg; if (ok) done() }
-            }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(if (busy) "LOADING…" else "LOAD PLAYLIST") }
+            }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(if (busy) "INDEXING…" else "LOAD PLAYLIST") }
 
             HorizontalDivider(Modifier.padding(vertical = 13.dp))
             Text("TV SCHEDULE DATA", fontWeight = FontWeight.Black)
