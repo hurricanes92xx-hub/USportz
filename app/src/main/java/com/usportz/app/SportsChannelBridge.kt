@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -74,7 +75,7 @@ object SportsChannelBridge {
             else -> return@withContext cached
         }
 
-        val result = runCatching { parse(fetch(source)) }.getOrDefault(emptyList())
+        val result = runCatching { fetchAndParse(source) }.getOrDefault(emptyList())
         if (result.isNotEmpty()) {
             cached = result
             cachedAt = now
@@ -82,8 +83,6 @@ object SportsChannelBridge {
             persist(context, result, sourceKey, now)
             result
         } else {
-            // Never destroy a known-good index because a provider is temporarily down.
-            // A stale cache is allowed for seven days so offline startup remains useful.
             if (cached.isNotEmpty() && cachedAt > 0L && now - cachedAt <= MAX_STALE_MS) cached else emptyList()
         }
     }
@@ -97,18 +96,21 @@ object SportsChannelBridge {
             .maxByOrNull { it.second }
             ?.first
 
-    private fun fetch(source: String): String {
+    /** Stream the playlist directly into the parser so huge inventories aren't duplicated as one String. */
+    private fun fetchAndParse(source: String): List<SportsChannel> {
         val conn = URL(source).openConnection() as HttpURLConnection
         conn.connectTimeout = 8_000
-        conn.readTimeout = 12_000
+        conn.readTimeout = 60_000
         conn.instanceFollowRedirects = true
         conn.requestMethod = "GET"
         conn.setRequestProperty("User-Agent", "USportz/1.0")
         return try {
             val code = conn.responseCode
             if (code !in 200..299) throw IllegalStateException("HTTP $code")
-            conn.inputStream.bufferedReader().use { it.readText() }
-        } finally { conn.disconnect() }
+            conn.inputStream.bufferedReader().use(::parse)
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
@@ -137,11 +139,13 @@ object SportsChannelBridge {
         }
     }
 
-    /** Parse the complete playlist. There is intentionally no artificial channel-count ceiling. */
-    private fun parse(text: String): List<SportsChannel> {
+    private fun parse(reader: BufferedReader): List<SportsChannel> {
         val result = ArrayList<SportsChannel>()
         var attrs = emptyMap<String, String>()
-        text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { line ->
+        while (true) {
+            val raw = reader.readLine() ?: break
+            val line = raw.trim()
+            if (line.isEmpty()) continue
             when {
                 line.startsWith("#EXTINF", true) -> attrs = parseAttrs(line)
                 !line.startsWith("#") -> {
