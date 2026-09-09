@@ -38,7 +38,7 @@ object SportsSchedule {
         val now = System.currentTimeMillis()
         if (!forceRefresh && cached.isNotEmpty() && now - cachedAt < CACHE_TTL_MS) return@withContext cached
 
-        val fresh = feeds.flatMap { fetch(it) }
+        val fresh = feeds.flatMap { feed -> fetch(feed) }
             .distinctBy { it.id }
             .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { it.startTime })
             .take(200)
@@ -83,9 +83,11 @@ object SportsSchedule {
                         }
                     }
                     val status = competition.optJSONObject("status")?.optJSONObject("type")
+                    val rawName = event.optString("name")
+                    val displayLeague = SportsBranding.label(rawName, feed.league)
                     add(SportsEvent(
-                        id = event.optString("id"), sport = feed.sport, league = feed.league,
-                        name = event.optString("name"), shortName = event.optString("shortName"),
+                        id = event.optString("id"), sport = feed.sport, league = displayLeague,
+                        name = rawName, shortName = event.optString("shortName"),
                         state = status?.optString("state").orEmpty(), startTime = event.optString("date"),
                         competitors = names, detail = status?.optString("detail").orEmpty()
                     ))
@@ -96,27 +98,28 @@ object SportsSchedule {
 
     fun matchChannel(event: SportsEvent, channelName: String, group: String): Int {
         val haystack = "$channelName $group".lowercase()
+        val tokens = buildList {
+            add(event.league.lowercase())
+            add(event.sport.lowercase())
+            event.competitors.forEach { add(it.lowercase()) }
+        }
         var score = 0
-
-        event.competitors.map { it.lowercase() }
-            .flatMap { listOf(it, it.replace(" university", ""), it.replace(" state", " st")) }
-            .filter { it.length >= 4 }
-            .distinct()
-            .forEach { token -> if (haystack.contains(token)) score += 4 }
-
+        tokens.filter { it.length >= 4 }.forEach { token ->
+            if (haystack.contains(token)) score += if (token == event.league.lowercase()) 4 else 3
+        }
         val leagueAliases = mapOf(
-            "nfl" to listOf("nfl", "football"), "college-football" to listOf("ncaa", "college football"),
-            "nba" to listOf("nba", "basketball"), "wnba" to listOf("wnba", "womens basketball"),
-            "mens-college-basketball" to listOf("ncaa", "college basketball"),
-            "mlb" to listOf("mlb", "baseball"), "nhl" to listOf("nhl", "hockey"),
-            "ufc" to listOf("ufc", "mma"), "epl" to listOf("epl", "premier league"),
-            "usa.1" to listOf("mls", "soccer"), "eng.1" to listOf("epl", "premier league", "soccer")
+            "nfl" to listOf("nfl", "football"),
+            "nba" to listOf("nba", "basketball"),
+            "wnba" to listOf("wnba", "basketball"),
+            "mlb" to listOf("mlb", "baseball"),
+            "nhl" to listOf("nhl", "hockey"),
+            "ufc" to listOf("ufc", "mma"),
+            "premier league" to listOf("epl", "premier league"),
+            "mls" to listOf("mls", "soccer"),
+            "ncaa football" to listOf("ncaa", "college football", "football"),
+            "ncaa basketball" to listOf("ncaa", "college basketball", "basketball")
         )
-        leagueAliases[event.league].orEmpty().forEach { alias -> if (haystack.contains(alias)) score += 3 }
-
-        SportsBranding.find(event.name, event.league)?.aliases.orEmpty()
-            .forEach { alias -> if (haystack.contains(alias.lowercase())) score += 2 }
-
+        leagueAliases[event.league.lowercase()].orEmpty().forEach { if (haystack.contains(it)) score += 2 }
         return score
     }
 }
