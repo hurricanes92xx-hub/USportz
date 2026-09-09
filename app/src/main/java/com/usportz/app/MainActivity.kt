@@ -22,7 +22,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -32,9 +34,14 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private data class Channel(
     val id: String,
@@ -43,16 +50,6 @@ private data class Channel(
     val logo: String?,
     val url: String
 )
-
-private data class SportEvent(
-    val title: String,
-    val league: String,
-    val time: String,
-    val sport: String,
-    val live: Boolean = false
-)
-
-private val sports = listOf("All", "Football", "Basketball", "Baseball", "Hockey", "Soccer", "MMA", "Wrestling")
 
 class MainActivity : ComponentActivity() {
     private val store by lazy { SourceStore(this) }
@@ -72,14 +69,38 @@ private fun USportzApp(store: SourceStore) {
     var favorites by remember { mutableStateOf(store.favorites) }
     var selectedSport by remember { mutableStateOf("All") }
     var query by remember { mutableStateOf("") }
-    val events = remember { sampleEvents() }
+    var events by remember { mutableStateOf<List<SportsEvent>>(emptyList()) }
+    var scheduleLoading by remember { mutableStateOf(true) }
+    var scheduleError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun refreshSchedule(force: Boolean) {
+        scheduleLoading = true
+        scheduleError = null
+        scope.launch {
+            runCatching { SportsSchedule.load(forceRefresh = force) }
+                .onSuccess {
+                    events = it
+                    scheduleLoading = false
+                    if (it.isEmpty()) scheduleError = "No games are available right now."
+                }
+                .onFailure {
+                    scheduleLoading = false
+                    scheduleError = it.message ?: "Schedule unavailable"
+                }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshSchedule(force = false)
+    }
 
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = Color(0xFF48B9FF),
-            secondary = Color(0xFF8BD7FF),
+            primary = Color(0xFFBDA8E8),
+            secondary = Color(0xFF6CCBFF),
             background = Color(0xFF070B10),
-            surface = Color(0xFF101820)
+            surface = Color(0xFF171A21)
         )
     ) {
         when {
@@ -108,14 +129,29 @@ private fun USportzApp(store: SourceStore) {
             ) { pad ->
                 LazyColumn(
                     Modifier.fillMaxSize().padding(pad).padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    item { Header { settings = true } }
+                    item { Header(onSettings = { settings = true }, onRefresh = { refreshSchedule(true) }, loading = scheduleLoading) }
                     when (tab) {
                         0 -> {
-                            item { HeroCard(events.first()) { tab = 1 } }
-                            item { Section("Live & Upcoming") }
-                            items(events.drop(1), key = { it.title }) { event -> EventCard(event, false) {} }
+                            if (scheduleLoading && events.isEmpty()) item { ScheduleLoadingCard() }
+                            val live = SportsSchedule.liveEvents(events)
+                            val upcoming = SportsSchedule.upcomingEvents(events)
+                            if (live.isNotEmpty()) {
+                                item { Section("LIVE NOW") }
+                                items(live.take(6), key = { "live-${it.id}" }) { event ->
+                                    SportsEventCard(event, channels, onWatch = { playerUrl = it.url })
+                                }
+                            }
+                            item { Section(if (live.isEmpty()) "Sports Schedule" else "Coming Up") }
+                            if (upcoming.isEmpty()) {
+                                item { EmptyCard(scheduleError ?: "No upcoming games found", "Pull to refresh from the live sports feed.") }
+                            } else {
+                                items(upcoming.take(12), key = { "up-${it.id}" }) { event ->
+                                    SportsEventCard(event, channels, onWatch = { playerUrl = it.url })
+                                }
+                            }
+                            if (scheduleError != null && events.isNotEmpty()) item { FeedStatus(scheduleError!!) }
                             item { Section("Your Channels") }
                             if (channels.isEmpty()) {
                                 item { EmptyCard("No source loaded", "Open Settings to connect Xtream Codes or an M3U/M3U8 playlist.") }
@@ -130,8 +166,21 @@ private fun USportzApp(store: SourceStore) {
                         }
                         1 -> {
                             item { SportFilters(selectedSport) { selectedSport = it } }
-                            val filteredEvents = if (selectedSport == "All") events else events.filter { it.sport == selectedSport }
-                            items(filteredEvents, key = { it.title }) { event -> EventCard(event, false) {} }
+                            if (scheduleLoading && events.isEmpty()) item { ScheduleLoadingCard() }
+                            val filtered = SportsSchedule.forSport(events, selectedSport)
+                            val live = SportsSchedule.liveEvents(filtered)
+                            val upcoming = SportsSchedule.upcomingEvents(filtered)
+                            if (live.isNotEmpty()) {
+                                item { Section("LIVE NOW") }
+                                items(live, key = { "sports-live-${it.id}" }) { event -> SportsEventCard(event, channels) { playerUrl = it.url } }
+                            }
+                            item { Section("UPCOMING") }
+                            if (upcoming.isEmpty()) {
+                                item { EmptyCard("No ${selectedSport.lowercase()} events", "The live schedule will populate as games are posted.") }
+                            } else {
+                                items(upcoming, key = { "sports-up-${it.id}" }) { event -> SportsEventCard(event, channels) { playerUrl = it.url } }
+                            }
+                            if (scheduleError != null) item { FeedStatus(scheduleError!!) }
                         }
                         2 -> {
                             item { Section("Live TV") }
@@ -194,60 +243,185 @@ private fun USportzApp(store: SourceStore) {
 }
 
 @Composable
-private fun Header(openSettings: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        Column { Text("USportz", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold); Text("Sports command center", color = Color.Gray) }
-        IconButton(openSettings) { Icon(Icons.Default.Settings, "Settings") }
-    }
-}
-
-@Composable
-private fun Section(text: String) { Text(text, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 22.dp, bottom = 10.dp)) }
-
-@Composable
-private fun HeroCard(event: SportEvent, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(top = 16.dp).clickable(onClick = onClick), shape = RoundedCornerShape(20.dp)) {
-        Column(Modifier.padding(20.dp)) {
-            Text(if (event.live) "LIVE NOW" else "FEATURED", color = Color(0xFF65C9FF), fontWeight = FontWeight.Bold)
-            Text(event.title, fontSize = 25.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(top = 5.dp))
-            Text("${event.league} • ${event.time}", color = Color.Gray)
-            Button(onClick = onClick, modifier = Modifier.padding(top = 14.dp)) { Text("Explore Sports") }
+private fun Header(onSettings: () -> Unit, onRefresh: () -> Unit, loading: Boolean) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column {
+            Text("USportz", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+            Text("Live sports command center", color = Color.Gray)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onRefresh, enabled = !loading) { Icon(Icons.Default.Refresh, "Refresh schedule") }
+            IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
         }
     }
 }
 
 @Composable
-private fun EventCard(event: SportEvent, favorite: Boolean, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 5.dp).clickable(onClick = onClick), shape = RoundedCornerShape(14.dp)) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(46.dp).background(Color(0xFF183344), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Sports, null) }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) { Text(event.title, fontWeight = FontWeight.Bold); Text("${event.league} • ${event.sport}", color = Color.Gray, fontSize = 13.sp) }
-            Text(event.time, fontSize = 12.sp)
-            Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite")
+private fun ScheduleLoadingCard() {
+    Card(Modifier.fillMaxWidth().padding(top = 16.dp), shape = RoundedCornerShape(20.dp)) {
+        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text("Loading live schedule…", fontWeight = FontWeight.Bold)
+                Text("Getting games, logos and broadcast details", color = Color.Gray, fontSize = 13.sp)
+            }
         }
     }
+}
+
+@Composable
+private fun Section(text: String) {
+    Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.5.sp)
+        Spacer(Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun SportsEventCard(event: SportsEvent, channels: List<Channel>, onWatch: (Channel) -> Unit) {
+    val best = channels.maxByOrNull { SportsSchedule.matchChannel(event, it.name, it.group) }
+    val bestScore = best?.let { SportsSchedule.matchChannel(event, it.name, it.group) } ?: 0
+    val brand = SportsPresentation.brand(event)
+    val status = SportsPresentation.status(event)
+    val isLive = event.state == "in"
+
+    Card(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = if (isLive) Color(0xFF20242B) else Color(0xFF191C22))
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!event.leagueLogo.isNullOrBlank()) {
+                    AsyncImage(
+                        model = event.leagueLogo,
+                        contentDescription = event.league,
+                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+                } else {
+                    BrandBadge(brand?.icon ?: event.league.take(4))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isLive) {
+                            Text("LIVE", color = Color(0xFFFF5E6C), fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(event.league, color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(SportsPresentation.matchup(event), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(top = 3.dp))
+                    Text(formatEventTime(event.startTime), color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(status, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (isLive) Color(0xFFFF5E6C) else Color.Gray)
+                    if (event.detail.isNotBlank()) Text(event.detail, fontSize = 11.sp, color = Color.Gray, maxLines = 1)
+                }
+            }
+            if (event.competitorLogos.any { it.isNotBlank() }) {
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    event.competitorLogos.take(2).forEachIndexed { index, logo ->
+                        if (index > 0) {
+                            Text("VS", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp))
+                        }
+                        if (logo.isNotBlank()) {
+                            AsyncImage(
+                                model = logo,
+                                contentDescription = event.competitors.getOrNull(index),
+                                modifier = Modifier.size(44.dp),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
+                    }
+                }
+            }
+            if (event.broadcast.isNotBlank()) {
+                Text("Watch on ${event.broadcast}", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+            }
+            if (best != null && bestScore > 0) {
+                Button(onClick = { onWatch(best) }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp), shape = RoundedCornerShape(12.dp)) {
+                    Icon(Icons.Default.PlayArrow, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isLive) "WATCH LIVE" else "WATCH")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrandBadge(label: String) {
+    Box(
+        Modifier.size(48.dp).background(Color(0xFF183344), RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center
+    ) { Text(label.take(5), fontWeight = FontWeight.ExtraBold, fontSize = 11.sp) }
+}
+
+@Composable
+private fun FeedStatus(message: String) {
+    Text(message, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
 }
 
 @Composable
 private fun ChannelCard(channel: Channel, favorite: Boolean, onPlay: () -> Unit, onFavorite: () -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
+    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(44.dp).background(Color(0xFF16242E), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.LiveTv, null) }
+            if (!channel.logo.isNullOrBlank()) {
+                AsyncImage(
+                    model = channel.logo,
+                    contentDescription = channel.name,
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                Box(Modifier.size(48.dp).background(Color(0xFF16242E), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.LiveTv, null)
+                }
+            }
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f).clickable(onClick = onPlay)) { Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 1); Text(channel.group, color = Color.Gray, fontSize = 12.sp, maxLines = 1) }
-            IconButton(onFavorite) { Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite") }
-            IconButton(onPlay) { Icon(Icons.Default.PlayArrow, "Play") }
+            Column(Modifier.weight(1f).clickable(onClick = onPlay)) {
+                Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(channel.group, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+            }
+            IconButton(onClick = onFavorite) { Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite") }
+            IconButton(onClick = onPlay) { Icon(Icons.Default.PlayArrow, "Play") }
         }
     }
 }
 
 @Composable
-private fun EmptyCard(title: String, message: String) { Card(Modifier.fillMaxWidth().padding(vertical = 8.dp)) { Column(Modifier.padding(20.dp)) { Text(title, fontWeight = FontWeight.Bold); Text(message, color = Color.Gray, modifier = Modifier.padding(top = 5.dp)) } } }
+private fun EmptyCard(title: String, message: String) {
+    Card(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Column(Modifier.padding(20.dp)) {
+            Text(title, fontWeight = FontWeight.Bold)
+            Text(message, color = Color.Gray, modifier = Modifier.padding(top = 5.dp))
+        }
+    }
+}
 
 @Composable
 private fun SportFilters(selected: String, onSelected: (String) -> Unit) {
-    LazyRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(sports) { sport -> FilterChip(selected = selected == sport, onClick = { onSelected(sport) }, label = { Text(sport) }) } }
+    LazyRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(SportsCatalog.categories) { sport ->
+            FilterChip(selected = selected == sport, onClick = { onSelected(sport) }, label = { Text(sport) })
+        }
+    }
+}
+
+private fun formatEventTime(value: String): String {
+    if (value.isBlank()) return "Time TBD"
+    val parsed = runCatching {
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(value)
+    }.getOrNull() ?: runCatching {
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).parse(value)
+    }.getOrNull()
+    return parsed?.let { SimpleDateFormat("EEE, MMM d • h:mm a", Locale.getDefault()).format(Date(it.time)) } ?: value
 }
 
 @Composable
@@ -260,7 +434,7 @@ private fun SettingsScreen(store: SourceStore, onDone: () -> Unit, onBack: () ->
     var loading by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onBack) { Icon(Icons.Default.ArrowBack, "Back") }; Text("Sources", fontSize = 27.sp, fontWeight = FontWeight.Bold) }
+        Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }; Text("Sources", fontSize = 27.sp, fontWeight = FontWeight.Bold) }
         Text("Xtream Codes", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 18.dp))
         OutlinedTextField(server, { server = it }, label = { Text("Server URL") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(user, { user = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
@@ -282,7 +456,7 @@ private fun PlayerScreen(url: String, onBack: () -> Unit) {
     DisposableEffect(player) { onDispose { player.release() } }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(factory = { PlayerView(it).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
-        IconButton(onBack, Modifier.align(Alignment.TopStart).padding(12.dp)) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+        IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
     }
 }
 
@@ -342,12 +516,3 @@ private class SourceStore(private val context: Context) {
         return map
     }
 }
-
-private fun sampleEvents() = listOf(
-    SportEvent("Sunday Night Football", "NFL", "8:20 PM", "Football", true),
-    SportEvent("College Football", "NCAA", "7:00 PM", "Football"),
-    SportEvent("NBA Tonight", "NBA", "8:00 PM", "Basketball"),
-    SportEvent("MLB Tonight", "MLB", "7:10 PM", "Baseball"),
-    SportEvent("NHL Tonight", "NHL", "7:30 PM", "Hockey"),
-    SportEvent("UFC Fight Night", "UFC", "10:00 PM", "MMA")
-)
