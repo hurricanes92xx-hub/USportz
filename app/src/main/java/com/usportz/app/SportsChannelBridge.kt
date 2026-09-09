@@ -12,7 +12,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
 
-/** Reliable channel source with cached-first startup and bounded stale fallback. */
+/** Reliable channel source with cached-first startup and fast indexed event matching. */
 data class SportsChannel(
     val id: String,
     val name: String,
@@ -28,6 +28,7 @@ object SportsChannelBridge {
     @Volatile private var cached: List<SportsChannel> = emptyList()
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedSourceKey = ""
+    @Volatile private var channelIndex: ChannelIndex<SportsChannel>? = null
 
     fun restoreCached(context: Context): List<SportsChannel> {
         if (cached.isNotEmpty()) return cached
@@ -46,10 +47,11 @@ object SportsChannelBridge {
                     add(SportsChannel(item.optString("id"), item.optString("name", "Channel"), item.optString("group", "Live TV"), item.optString("logo").ifBlank { null }, url))
                 }
             }
-        }.getOrElse {
-            runCatching { parseCachedArray(file.readText()) }.getOrDefault(emptyList())
+        }.getOrElse { runCatching { parseCachedArray(file.readText()) }.getOrDefault(emptyList()) }
+        if (restored.isNotEmpty()) {
+            cached = restored
+            channelIndex = ChannelIndex(restored, SportsChannel::name, SportsChannel::group)
         }
-        if (restored.isNotEmpty()) cached = restored
         return cached
     }
 
@@ -64,9 +66,7 @@ object SportsChannelBridge {
         val playlist = sourceConfig.playlist
         val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
 
-        if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt in 0 until CACHE_TTL_MS) {
-            return@withContext cached
-        }
+        if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt in 0 until CACHE_TTL_MS) return@withContext cached
 
         val source = when {
             server.isNotBlank() && user.isNotBlank() && pass.isNotBlank() ->
@@ -80,6 +80,7 @@ object SportsChannelBridge {
             cached = result
             cachedAt = now
             cachedSourceKey = sourceKey
+            channelIndex = ChannelIndex(result, SportsChannel::name, SportsChannel::group)
             persist(context, result, sourceKey, now)
             result
         } else {
@@ -89,12 +90,24 @@ object SportsChannelBridge {
 
     fun cachedChannels(): List<SportsChannel> = cached
 
-    fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? =
-        channels.asSequence()
+    fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? {
+        if (channels.isEmpty()) return null
+        val index = channelIndex ?: ChannelIndex(channels, SportsChannel::name, SportsChannel::group).also { channelIndex = it }
+        val queryTerms = buildList {
+            event.competitors.forEach { if (it.isNotBlank()) add(it) }
+            if (event.league.isNotBlank()) add(event.league)
+            if (event.broadcast.isNotBlank()) add(event.broadcast)
+        }
+        val candidates = linkedMapOf<String, SportsChannel>()
+        queryTerms.take(4).forEach { query -> index.search(query, 80).forEach { candidates[it.id] = it } }
+        if (candidates.isEmpty()) index.forSport(SportsCatalog.classify(event.name, event.league), 120).forEach { candidates[it.id] = it }
+        val pool = if (candidates.isNotEmpty()) candidates.values else channels.take(500)
+        return pool.asSequence()
             .map { it to SportsSchedule.matchChannel(event, it.name, it.group) }
             .filter { it.second >= 5 }
-            .maxByOrNull { it.second }
+            .maxWithOrNull(compareBy<Pair<SportsChannel, Int>> { it.second }.thenBy { it.first.name.lowercase() })
             ?.first
+    }
 
     /** Stream the playlist directly into the parser so huge inventories aren't duplicated as one String. */
     private fun fetchAndParse(source: String): List<SportsChannel> {
@@ -103,14 +116,12 @@ object SportsChannelBridge {
         conn.readTimeout = 60_000
         conn.instanceFollowRedirects = true
         conn.requestMethod = "GET"
-        conn.setRequestProperty("User-Agent", "USportz/1.0")
+        conn.setRequestProperty("User-Agent", "USportz/1.1")
         return try {
             val code = conn.responseCode
             if (code !in 200..299) throw IllegalStateException("HTTP $code")
             conn.inputStream.bufferedReader().use(::parse)
-        } finally {
-            conn.disconnect()
-        }
+        } finally { conn.disconnect() }
     }
 
     private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
