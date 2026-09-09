@@ -42,12 +42,18 @@ class SourceStore(private val context: Context) {
         main.post { done(true, if (tvFeedUrl.isBlank()) "TV schedule feed cleared" else "TV schedule feed saved") }
     }
 
-    fun saveXtream(base: String, username: String, password: String, done: (Boolean, String) -> Unit) {
+    fun saveXtream(
+        base: String,
+        username: String,
+        password: String,
+        done: (Boolean, String) -> Unit,
+        progress: (String) -> Unit = {}
+    ) {
         server = base.trimEnd('/')
         user = username.trim()
         pass = password
         playlist = ""
-        reloadSource(done)
+        reloadSource(done, progress)
     }
 
     fun saveM3u(url: String, done: (Boolean, String) -> Unit) {
@@ -58,20 +64,26 @@ class SourceStore(private val context: Context) {
         reloadSource(done)
     }
 
-    private fun reloadSource(done: (Boolean, String) -> Unit) {
+    private fun reloadSource(done: (Boolean, String) -> Unit, progress: (String) -> Unit = {}) {
         io.launch {
-            val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
+            main.post { progress("Connecting to source…") }
+            val result = runCatching {
+                main.post { progress("Downloading full channel inventory…") }
+                SportsChannelBridge.load(context, forceRefresh = true)
+            }
             val channels = result.getOrDefault(emptyList())
             main.post {
-                if (channels.isNotEmpty()) done(true, "Connected • ${channels.size} channels indexed")
-                else done(false, result.exceptionOrNull()?.message?.let { "Source error: $it" } ?: "Source returned no channels")
+                if (channels.isNotEmpty()) {
+                    done(true, "Connected • ${channels.size} channels indexed")
+                } else {
+                    done(false, result.exceptionOrNull()?.message?.let { "Source error: $it" } ?: "Source returned no channels")
+                }
             }
         }
     }
 
     companion object {
         private const val PREFS_NAME = "usportz"
-        private const val KEY_ENCRYPTION = "usportz_key_v1"
 
         private fun securePrefs(context: Context) = runCatching {
             val masterKey = MasterKey.Builder(context)
@@ -85,8 +97,6 @@ class SourceStore(private val context: Context) {
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         }.getOrElse {
-            // Do not silently fall back to plaintext storage. A secure-store failure
-            // leaves the source unavailable rather than writing credentials unencrypted.
             throw IllegalStateException("Secure credential storage unavailable", it)
         }
     }
