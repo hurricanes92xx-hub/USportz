@@ -230,23 +230,24 @@ private fun TvEventCard(event: SportsEvent, channel: SportsChannel?, favorite: B
     val live = event.state == "in"
     val time = formatEventTime(event.startTime)
     TvFocusable(onClick = { if (channel != null) play(channel.url) }) { focused ->
-        Column(Modifier.width(318.dp).height(228.dp).clip(RoundedCornerShape(20.dp)).background(if (focused) Color(0xFF182838) else TvSurface).border(1.dp, if (focused) TvAccent else Color(0xFF243241), RoundedCornerShape(20.dp)).padding(17.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(SportsPresentation.label(event).uppercase(), color = TvAccent, fontSize = 11.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.width(318.dp).height(314.dp).clip(RoundedCornerShape(20.dp)).background(if (focused) Color(0xFF182838) else TvSurface).border(1.dp, if (focused) TvAccent else Color(0xFF243241), RoundedCornerShape(20.dp)).padding(12.dp)) {
+            EventArtwork(event = event, brand = SportsPresentation.brand(event), compact = true)
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(SportsPresentation.label(event).uppercase(), color = TvAccent, fontSize = 11.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (live) Text("LIVE", color = Color(0xFFFF6B6B), fontSize = 11.sp, fontWeight = FontWeight.Black)
-                    else Text(event.detail.ifBlank { time.ifBlank { "UPCOMING" } }, color = Color.Gray, fontSize = 11.sp)
-                    Spacer(Modifier.width(8.dp))
+                    else Text(event.detail.ifBlank { time.ifBlank { "UPCOMING" } }, color = Color.Gray, fontSize = 11.sp, maxLines = 1)
+                    Spacer(Modifier.width(6.dp))
                     TvIconButton(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, toggleFavorite)
                 }
             }
-            Text(event.shortName.ifBlank { event.name }, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
-            if (event.competitors.isNotEmpty()) Text(event.competitors.joinToString("  •  "), color = Color.LightGray, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+            Text(event.shortName.ifBlank { event.name }, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
+            if (event.competitors.isNotEmpty()) Text(event.competitors.joinToString("  •  "), color = Color.LightGray, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
             Spacer(Modifier.weight(1f))
             if (channel != null) {
                 Text(if (live) "WATCH LIVE" else "WATCH", color = TvAccent, fontSize = 12.sp, fontWeight = FontWeight.Black)
-                Text(channel.name, color = Color.White, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
-            } else Text("No matched channel", color = Color.Gray, fontSize = 12.sp)
+                Text(channel.name, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            } else Text("No matched channel", color = Color.Gray, fontSize = 11.sp)
         }
     }
 }
