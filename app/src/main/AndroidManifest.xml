@@ -6,6 +6,7 @@
   <activity android:name=".MainActivity" android:screenOrientation="unspecified" android:exported="true">
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
   </activity>
+  <activity android:name=".LeagueHubActivity" android:screenOrientation="unspecified" android:exported="false"/>
   <activity android:name=".RichSportsActivity" android:screenOrientation="unspecified" android:exported="false"/>
   <activity android:name=".RichPlayerActivity" android:screenOrientation="landscape" android:exported="false"/>
   <activity android:name=".TvMainActivity" android:screenOrientation="landscape" android:exported="true">
