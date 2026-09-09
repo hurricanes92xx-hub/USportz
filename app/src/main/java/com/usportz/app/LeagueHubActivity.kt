@@ -44,6 +44,7 @@ private fun LeagueHub(key: String, back: () -> Unit) {
     }
     LaunchedEffect(key) { load() }
     val live = events.filter { it.state == "in" }
+    val upcoming = events.filter { it.state != "in" && it.state != "post" }.take(30)
     MaterialTheme(colorScheme = darkColorScheme()) {
         Scaffold(topBar = {
             TopAppBar(title = { Text(brand.label) }, navigationIcon = { IconButton(back) { Icon(Icons.Default.ArrowBack, "Back") } }, actions = { TextButton(onClick = { load() }, enabled = !loading) { Text("REFRESH") } })
@@ -54,7 +55,7 @@ private fun LeagueHub(key: String, back: () -> Unit) {
                 if (live.isEmpty()) item { Text(if (loading) "Loading schedule…" else "No live events right now.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 items(live, key = { it.id }) { event -> LeagueEvent(event, channels, favs) }
                 item { Text("UPCOMING", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
-                items(events.filter { it.state != "in" && it.state != "post" }.take(30), key = { it.id }) { event -> LeagueEvent(event, channels, favs) }
+                items(upcoming, key = { it.id }) { event -> LeagueEvent(event, channels, favs) }
             }
         }
     }
@@ -63,14 +64,18 @@ private fun LeagueHub(key: String, back: () -> Unit) {
 @Composable
 private fun LeagueEvent(event: SportsEvent, channels: List<SportsChannel>, favs: Favs) {
     val channel = SportsChannelBridge.bestMatch(event, channels)
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp)) {
-            Text(SportsPresentation.matchup(event), style = MaterialTheme.typography.titleMedium)
+    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+        Column(Modifier.padding(10.dp)) {
+            EventArtwork(event, compact = false)
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = {}, label = { Text(if (event.state == "in") "LIVE" else "UPCOMING", fontSize = 9.sp) })
+                if (event.broadcast.isNotBlank()) AssistChip(onClick = {}, label = { Text(event.broadcast, fontSize = 9.sp) })
+            }
+            Text(SportsPresentation.matchup(event), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 7.dp))
             Text(event.detail.ifBlank { if (event.state == "in") "LIVE NOW" else "Scheduled" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (event.broadcast.isNotBlank()) Text(event.broadcast, color = MaterialTheme.colorScheme.primary)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = { favs.toggleEvent(event.id) }) { Text(if (favs.isEventFav(event.id)) "★ SAVED" else "☆ SAVE") }
-                if (channel != null) Text("${channel.name}", modifier = Modifier.padding(start = 8.dp))
+                if (channel != null) Text(channel.name, modifier = Modifier.padding(start = 8.dp))
             }
         }
     }
