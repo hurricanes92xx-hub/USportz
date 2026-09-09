@@ -1,6 +1,9 @@
 package com.usportz.app
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -31,23 +34,35 @@ object SportsSchedule {
     private val feeds = listOf(
         Feed("football", "nfl"), Feed("football", "college-football"),
         Feed("basketball", "nba"), Feed("basketball", "wnba"), Feed("basketball", "mens-college-basketball"),
-        Feed("baseball", "mlb"), Feed("hockey", "nhl"), Feed("soccer", "usa.1"),
-        Feed("soccer", "eng.1"), Feed("mma", "ufc")
+        Feed("baseball", "mlb"), Feed("hockey", "nhl"),
+        Feed("soccer", "usa.1"), Feed("soccer", "eng.1"), Feed("soccer", "esp.1"),
+        Feed("soccer", "ger.1"), Feed("soccer", "ita.1"), Feed("soccer", "fra.1"), Feed("soccer", "uefa.champions"),
+        Feed("mma", "ufc")
     )
 
     suspend fun load(forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val source = if (sourceChannels.isNotEmpty()) sourceChannels else SportsChannelBridge.cachedChannels()
-        if (!forceRefresh && cached.isNotEmpty() && now - cachedAt < CACHE_TTL_MS) return@withContext prioritizeSourceMatches(cached, source)
-        val fresh = feeds.flatMap { fetch(it) }
-            .distinctBy { it.id }
-            .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { it.startTime })
-            .take(200)
+        if (!forceRefresh && cached.isNotEmpty() && now - cachedAt < CACHE_TTL_MS) {
+            return@withContext prioritizeSourceMatches(cached, source)
+        }
+
+        val fresh = coroutineScope {
+            feeds.map { feed -> async(Dispatchers.IO) { fetch(feed) } }
+                .awaitAll()
+                .flatten()
+                .distinctBy { it.id }
+                .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { it.startTime })
+                .take(300)
+        }
+
         if (fresh.isNotEmpty()) {
             cached = fresh
             cachedAt = now
             prioritizeSourceMatches(fresh, source)
-        } else prioritizeSourceMatches(cached, source)
+        } else {
+            prioritizeSourceMatches(cached, source)
+        }
     }
 
     fun isCacheFresh(): Boolean = cached.isNotEmpty() && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS
@@ -58,49 +73,78 @@ object SportsSchedule {
 
     private fun prioritizeSourceMatches(events: List<SportsEvent>, channels: List<SportsChannel>): List<SportsEvent> {
         if (events.isEmpty() || channels.isEmpty()) return events
-        return events.sortedWith(compareByDescending<SportsEvent> { sourceMatchScore(it, channels) > 0 }
-            .thenByDescending { sourceMatchScore(it, channels) }
-            .thenByDescending { it.state == "in" }
-            .thenBy { it.startTime })
+        return events.sortedWith(
+            compareByDescending<SportsEvent> { sourceMatchScore(it, channels) > 0 }
+                .thenByDescending { sourceMatchScore(it, channels) }
+                .thenByDescending { it.state == "in" }
+                .thenBy { it.startTime }
+        )
     }
 
     /** Positive score means the Xtream/M3U inventory contains a plausible channel for this event. */
-    fun sourceMatchScore(event: SportsEvent, channels: List<SportsChannel>): Int = channels.asSequence().map { matchChannel(event, it.name, it.group) }.maxOrNull() ?: 0
+    fun sourceMatchScore(event: SportsEvent, channels: List<SportsChannel>): Int =
+        channels.asSequence().map { matchChannel(event, it.name, it.group) }.maxOrNull() ?: 0
 
     private fun fetch(feed: Feed): List<SportsEvent> {
         val url = "https://site.api.espn.com/apis/site/v2/sports/${feed.sport}/${feed.league}/scoreboard"
         return runCatching {
             val connection = URL(url).openConnection() as HttpURLConnection
-            connection.connectTimeout = 5000; connection.readTimeout = 7000; connection.requestMethod = "GET"; connection.setRequestProperty("User-Agent", "USportz/1.0")
-            val body = connection.inputStream.bufferedReader().use { it.readText() }; connection.disconnect()
-            val root = JSONObject(body); val events = root.optJSONArray("events") ?: return emptyList()
+            connection.connectTimeout = 5000
+            connection.readTimeout = 7000
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("User-Agent", "USportz/1.0")
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            connection.disconnect()
+            val root = JSONObject(body)
+            val events = root.optJSONArray("events") ?: return emptyList()
             val rootLeagueLogo = root.optJSONArray("leagues")?.optJSONObject(0)?.optJSONArray("logos")?.optJSONObject(0)?.optString("href").orEmpty()
             buildList {
                 for (i in 0 until events.length()) {
                     val event = events.optJSONObject(i) ?: continue
                     val competition = event.optJSONArray("competitions")?.optJSONObject(0) ?: continue
                     val competitors = competition.optJSONArray("competitors") ?: continue
-                    val names = ArrayList<String>(competitors.length()); val logos = ArrayList<String>(competitors.length())
+                    val names = ArrayList<String>(competitors.length())
+                    val logos = ArrayList<String>(competitors.length())
                     for (j in 0 until competitors.length()) {
-                        val c = competitors.optJSONObject(j) ?: continue; val team = c.optJSONObject("team") ?: continue; val name = team.optString("displayName")
-                        if (name.isNotBlank()) { names += name; logos += team.optString("logo").ifBlank { team.optJSONArray("logos")?.optJSONObject(0)?.optString("href").orEmpty() } }
+                        val c = competitors.optJSONObject(j) ?: continue
+                        val team = c.optJSONObject("team") ?: continue
+                        val name = team.optString("displayName")
+                        if (name.isNotBlank()) {
+                            names += name
+                            logos += team.optString("logo").ifBlank { team.optJSONArray("logos")?.optJSONObject(0)?.optString("href").orEmpty() }
+                        }
                     }
-                    val status = competition.optJSONObject("status")?.optJSONObject("type"); val rawName = event.optString("name"); val displayLeague = SportsBranding.label(rawName, feed.league)
-                    val broadcast = competition.optJSONArray("broadcasts")?.optJSONObject(0)?.optString("names").orEmpty().ifBlank { competition.optJSONArray("broadcasts")?.optJSONObject(0)?.optString("market").orEmpty() }
+                    val status = competition.optJSONObject("status")?.optJSONObject("type")
+                    val rawName = event.optString("name")
+                    val displayLeague = SportsBranding.label(rawName, feed.league)
+                    val broadcast = competition.optJSONArray("broadcasts")?.optJSONObject(0)?.optString("names").orEmpty()
+                        .ifBlank { competition.optJSONArray("broadcasts")?.optJSONObject(0)?.optString("market").orEmpty() }
                     val eventLogo = event.optJSONArray("logos")?.optJSONObject(0)?.optString("href").orEmpty()
-                    add(SportsEvent(event.optString("id"), feed.sport, displayLeague, rawName, event.optString("shortName"), status?.optString("state").orEmpty(), event.optString("date"), names, logos, eventLogo.ifBlank { rootLeagueLogo }.ifBlank { null }, status?.optString("detail").orEmpty(), broadcast))
+                    add(
+                        SportsEvent(
+                            event.optString("id"), feed.sport, displayLeague, rawName, event.optString("shortName"),
+                            status?.optString("state").orEmpty(), event.optString("date"), names, logos,
+                            eventLogo.ifBlank { rootLeagueLogo }.ifBlank { null }, status?.optString("detail").orEmpty(), broadcast
+                        )
+                    )
                 }
             }
         }.getOrDefault(emptyList())
     }
 
     fun matchChannel(event: SportsEvent, channelName: String, group: String): Int {
-        val haystack = normalize("$channelName $group"); val eventLeague = normalize(event.league); val eventSport = normalize(event.sport); var score = 0
+        val haystack = normalize("$channelName $group")
+        val eventLeague = normalize(event.league)
+        val eventSport = normalize(event.sport)
+        var score = 0
         if (eventLeague.isNotBlank() && haystack.contains(eventLeague)) score += 5
         if (eventSport.isNotBlank() && haystack.contains(eventSport)) score += 2
         event.competitors.forEach { team ->
-            val normalized = normalize(team); if (normalized.length >= 4 && haystack.contains(normalized)) score += 5
-            team.split(Regex("[^A-Za-z0-9]+" )).filter { it.length >= 4 }.forEach { token -> if (haystack.contains(token.lowercase())) score += 2 }
+            val normalized = normalize(team)
+            if (normalized.length >= 4 && haystack.contains(normalized)) score += 5
+            team.split(Regex("[^A-Za-z0-9]+"))
+                .filter { it.length >= 4 }
+                .forEach { token -> if (haystack.contains(token.lowercase())) score += 2 }
         }
         val aliases = mapOf(
             "nfl" to listOf("nfl", "football"), "nba" to listOf("nba", "basketball"), "wnba" to listOf("wnba", "basketball"),
