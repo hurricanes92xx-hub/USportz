@@ -37,6 +37,7 @@ internal fun USportzApp(store: SourceStore) {
     var loading by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
     val favs = remember { Favs(context) }
+    val channelIndex = remember(channels) { ChannelIndex(channels, { it.name }, { it.group }) }
     LaunchedEffect(Unit) { val local = SportsChannelBridge.restoreCached(context); if (local.isNotEmpty()) channels = local }
     LaunchedEffect(refresh) {
         loading = true
@@ -55,9 +56,9 @@ internal fun USportzApp(store: SourceStore) {
                 when (nav) {
                     Nav.HOME -> home(events, channels, favs, ::play)
                     Nav.SPORTS -> sports(events, channels, sport, { sport = it }, favs, ::play)
-                    Nav.LIVE -> live(channels, favs, ::play)
+                    Nav.LIVE -> live(channelIndex, favs, ::play)
                     Nav.FAV -> favorites(events, channels, favs, ::play)
-                    Nav.SEARCH -> search(query, { query = it }, events, channels, favs, ::play)
+                    Nav.SEARCH -> search(query, { query = it }, events, channelIndex, favs, ::play)
                     Nav.SOURCES -> sources(store) { refresh++ }
                 }
             }
@@ -81,9 +82,9 @@ private fun LazyListScope.sports(e: List<SportsEvent>, c: List<SportsChannel>, s
     if (live.isNotEmpty()) { item { Title("LIVE", "$sel now") }; item { EventRail(live, c, f, play) } }
     item { Title("UPCOMING", "$sel schedule") }; item { EventRail(SportsSchedule.upcomingEvents(x), c, f, play) }
 }
-private fun LazyListScope.live(c: List<SportsChannel>, f: Favs, play: (String) -> Unit) { item { Title("LIVE TV", "${c.size} channels") }; if (c.isEmpty()) item { Empty("No channels loaded", "Connect a source in Sources.") } else items(c, key = { it.id }) { ChannelRow(it, f.isChannelFav(it.id), { play(it.url) }, { f.toggleChannel(it.id) }) } }
+private fun LazyListScope.live(index: ChannelIndex<SportsChannel>, f: Favs, play: (String) -> Unit) { val c = index.all(); item { Title("LIVE TV", "${c.size} channels") }; if (c.isEmpty()) item { Empty("No channels loaded", "Connect a source in Sources.") } else items(c, key = { it.id }) { ChannelRow(it, f.isChannelFav(it.id), { play(it.url) }, { f.toggleChannel(it.id) }) } }
 private fun LazyListScope.favorites(e: List<SportsEvent>, c: List<SportsChannel>, f: Favs, play: (String) -> Unit) { item { Title("FAVORITES", "Saved on this device") }; val fe = e.filter { f.isEventFav(it.id) }; val fc = c.filter { f.isChannelFav(it.id) }; if (fe.isNotEmpty()) { item { Title("EVENTS", "Saved games") }; item { EventRail(fe, c, f, play) } }; if (fc.isNotEmpty()) { item { Title("CHANNELS", "Saved channels") }; item { ChannelRail(fc, f, play) } }; if (fe.isEmpty() && fc.isEmpty()) item { Empty("Nothing saved yet", "Star an event or channel to build Favorites.") } }
-private fun LazyListScope.search(q: String, set: (String) -> Unit, e: List<SportsEvent>, c: List<SportsChannel>, f: Favs, play: (String) -> Unit) { item { SearchBox(q, set) }; if (q.isBlank()) item { Text("Search teams • events • leagues • channels • sports", color = Color.Gray, modifier = Modifier.padding(horizontal = 16.dp)) } else { val ev = e.filter { it.name.contains(q, true) || it.shortName.contains(q, true) }.take(20); val teams = e.flatMap { it.competitors }.distinct().filter { it.contains(q, true) }.take(12); val leagues = e.map { it.league }.distinct().filter { it.contains(q, true) }.take(12); val ch = c.filter { it.name.contains(q, true) || it.group.contains(q, true) }.take(40); item { Results("TEAMS", teams) }; item { Results("EVENTS", ev.map { SportsPresentation.matchup(it) }) }; item { Results("LEAGUES", leagues) }; item { Title("CHANNELS", "${ch.size} matches") }; items(ch, key = { "search-${it.id}" }) { ChannelRow(it, f.isChannelFav(it.id), { play(it.url) }, { f.toggleChannel(it.id) }) } } }
+private fun LazyListScope.search(q: String, set: (String) -> Unit, e: List<SportsEvent>, index: ChannelIndex<SportsChannel>, f: Favs, play: (String) -> Unit) { item { SearchBox(q, set) }; if (q.isBlank()) item { Text("Search teams • events • leagues • channels • sports", color = Color.Gray, modifier = Modifier.padding(horizontal = 16.dp)) } else { val ev = e.filter { it.name.contains(q, true) || it.shortName.contains(q, true) }.take(20); val teams = e.flatMap { it.competitors }.distinct().filter { it.contains(q, true) }.take(12); val leagues = e.map { it.league }.distinct().filter { it.contains(q, true) }.take(12); val ch = index.search(q, 40); item { Results("TEAMS", teams) }; item { Results("EVENTS", ev.map { SportsPresentation.matchup(it) }) }; item { Results("LEAGUES", leagues) }; item { Title("CHANNELS", "${ch.size} matches") }; items(ch, key = { "search-${it.id}" }) { ChannelRow(it, f.isChannelFav(it.id), { play(it.url) }, { f.toggleChannel(it.id) }) } } }
 private fun LazyListScope.sources(s: SourceStore, done: () -> Unit) { item { Title("SOURCES", "Xtream Codes + M3U/M3U8") }; item { Editor(s, done) }; item { Text("Passwords remain local and are never bundled.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp)) } }
 @Composable private fun Header(t: String, l: Boolean, r: () -> Unit, src: () -> Unit) { Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("USPORTZ", fontSize = 29.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp); Text(t.uppercase(), fontSize = 11.sp, color = Color.Gray) }; IconButton(r, enabled = !l) { Icon(Icons.Default.Refresh, "Refresh") }; IconButton(src) { Icon(Icons.Default.SettingsInputAntenna, "Sources") } } }
 @Composable private fun Title(a: String, b: String) = Text("$a  $b", fontSize = 17.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 14.dp))
