@@ -42,3 +42,17 @@ internal fun LeagueArtwork(brand: SportsBrand, modifier: Modifier = Modifier, co
         }
     }
 }
+
+@Composable
+internal fun LeagueHero(brand: SportsBrand, liveCount: Int, eventCount: Int) {
+    Box(
+        Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(26.dp))
+            .background(Brush.linearGradient(artColors(brand.key))).padding(22.dp)
+    ) {
+        Column(Modifier.align(Alignment.BottomStart)) {
+            Text(brand.icon, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color.White.copy(alpha = .7f))
+            Text(brand.label, fontSize = 34.sp, fontWeight = FontWeight.Black, color = Color.White)
+            Text("$liveCount LIVE  •  $eventCount EVENTS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = .7f))
+        }
+    }
+}
