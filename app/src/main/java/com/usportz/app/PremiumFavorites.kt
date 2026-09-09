@@ -3,7 +3,7 @@ package com.usportz.app
 import android.content.Context
 
 /** Device-local favorites used by the premium shell. */
-private class Favs(c: Context) {
+class Favs(c: Context) {
     private val prefs = c.getSharedPreferences("usportz_favs", Context.MODE_PRIVATE)
 
     private fun values(key: String): Set<String> = prefs.getStringSet(key, emptySet()) ?: emptySet()
