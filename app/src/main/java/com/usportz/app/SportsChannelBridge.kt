@@ -9,8 +9,9 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.security.MessageDigest
 
-/** Lightweight bridge from saved Xtream/M3U settings into the rich sports hub. */
+/** Reliable channel source with cached-first startup and bounded stale fallback. */
 data class SportsChannel(
     val id: String,
     val name: String,
@@ -21,48 +22,52 @@ data class SportsChannel(
 
 object SportsChannelBridge {
     private const val CACHE_TTL_MS = 5 * 60 * 1000L
+    private const val MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000L
     private const val CACHE_FILE = "channel-index.json"
     @Volatile private var cached: List<SportsChannel> = emptyList()
     @Volatile private var cachedAt = 0L
+    @Volatile private var cachedSourceKey = ""
 
-    /** Restores the last local channel index without touching the network. */
     fun restoreCached(context: Context): List<SportsChannel> {
         if (cached.isNotEmpty()) return cached
         val file = File(context.noBackupFilesDir, CACHE_FILE)
         val restored = runCatching {
             if (!file.exists()) return@runCatching emptyList()
-            val array = JSONArray(file.readText())
+            val root = JSONObject(file.readText())
+            val array = root.optJSONArray("channels") ?: JSONArray()
+            cachedSourceKey = root.optString("sourceKey")
+            cachedAt = root.optLong("savedAt", file.lastModified())
             buildList(array.length()) {
                 for (i in 0 until array.length()) {
                     val item = array.optJSONObject(i) ?: continue
                     val url = item.optString("url")
                     if (url.isBlank()) continue
-                    add(
-                        SportsChannel(
-                            item.optString("id"), item.optString("name", "Channel"),
-                            item.optString("group", "Live TV"), item.optString("logo").ifBlank { null }, url
-                        )
-                    )
+                    add(SportsChannel(item.optString("id"), item.optString("name", "Channel"), item.optString("group", "Live TV"), item.optString("logo").ifBlank { null }, url))
                 }
             }
-        }.getOrDefault(emptyList())
-        if (restored.isNotEmpty()) {
-            cached = restored
-            cachedAt = file.lastModified()
+        }.getOrElse {
+            // Migrate the previous array-only cache format.
+            runCatching { parseCachedArray(file.readText()) }.getOrDefault(emptyList())
         }
+        if (restored.isNotEmpty()) cached = restored
         return cached
     }
 
     suspend fun load(context: Context, forceRefresh: Boolean = false): List<SportsChannel> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         if (cached.isEmpty()) restoreCached(context)
-        if (!forceRefresh && cached.isNotEmpty() && cachedAt > 0L && now - cachedAt < CACHE_TTL_MS) return@withContext cached
 
-        val prefs = context.getSharedPreferences("usportz", Context.MODE_PRIVATE)
-        val server = prefs.getString("server", "").orEmpty().trimEnd('/')
-        val user = prefs.getString("user", "").orEmpty()
-        val pass = prefs.getString("pass", "").orEmpty()
-        val playlist = prefs.getString("playlist", "").orEmpty()
+        val sourceConfig = SourceStore(context)
+        val server = sourceConfig.server.trimEnd('/')
+        val user = sourceConfig.user
+        val pass = sourceConfig.pass
+        val playlist = sourceConfig.playlist
+        val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
+
+        if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt in 0 until CACHE_TTL_MS) {
+            return@withContext cached
+        }
+
         val source = when {
             server.isNotBlank() && user.isNotBlank() && pass.isNotBlank() ->
                 "$server/get.php?username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}&type=m3u_plus&output=ts"
@@ -74,12 +79,16 @@ object SportsChannelBridge {
         if (result.isNotEmpty()) {
             cached = result
             cachedAt = now
-            persist(context, result)
+            cachedSourceKey = sourceKey
+            persist(context, result, sourceKey, now)
             result
-        } else cached
+        } else {
+            // Never destroy a known-good index because a provider is temporarily down.
+            // A stale cache is allowed for seven days so offline startup remains useful.
+            if (cached.isNotEmpty() && cachedAt > 0L && now - cachedAt <= MAX_STALE_MS) cached else emptyList()
+        }
     }
 
-    /** Current source inventory, populated by the premium shell before schedule loading. */
     fun cachedChannels(): List<SportsChannel> = cached
 
     fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? =
@@ -91,55 +100,55 @@ object SportsChannelBridge {
 
     private fun fetch(source: String): String {
         val conn = URL(source).openConnection() as HttpURLConnection
-        conn.connectTimeout = 8000
-        conn.readTimeout = 12000
+        conn.connectTimeout = 8_000
+        conn.readTimeout = 12_000
         conn.instanceFollowRedirects = true
+        conn.requestMethod = "GET"
         conn.setRequestProperty("User-Agent", "USportz/1.0")
         return try {
+            val code = conn.responseCode
+            if (code !in 200..299) throw IllegalStateException("HTTP $code")
             conn.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            conn.disconnect()
-        }
+        } finally { conn.disconnect() }
     }
 
-    private fun persist(context: Context, channels: List<SportsChannel>) {
+    private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
         val array = JSONArray()
         channels.forEach { channel ->
-            array.put(
-                JSONObject().apply {
-                    put("id", channel.id)
-                    put("name", channel.name)
-                    put("group", channel.group)
-                    put("logo", channel.logo ?: "")
-                    put("url", channel.url)
-                }
-            )
+            array.put(JSONObject().apply {
+                put("id", channel.id); put("name", channel.name); put("group", channel.group)
+                put("logo", channel.logo ?: ""); put("url", channel.url)
+            })
         }
-        val target = File(context.noBackupFilesDir, CACHE_FILE)
-        val temp = File(context.noBackupFilesDir, "$CACHE_FILE.tmp")
-        runCatching {
-            temp.writeText(array.toString())
-            if (!temp.renameTo(target)) {
-                target.delete()
-                temp.renameTo(target)
+        val root = JSONObject().apply { put("version", 2); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
+        val dir = context.noBackupFilesDir
+        val target = File(dir, CACHE_FILE)
+        val temp = File(dir, "$CACHE_FILE.tmp")
+        runCatching { temp.writeText(root.toString()); if (!temp.renameTo(target)) { target.delete(); temp.renameTo(target) } }
+    }
+
+    private fun parseCachedArray(text: String): List<SportsChannel> {
+        val array = runCatching { JSONArray(text) }.getOrDefault(JSONArray())
+        return buildList(array.length()) {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val url = item.optString("url")
+                if (url.isNotBlank()) add(SportsChannel(item.optString("id"), item.optString("name", "Channel"), item.optString("group", "Live TV"), item.optString("logo").ifBlank { null }, url))
             }
         }
     }
 
     private fun parse(text: String): List<SportsChannel> {
-        val lines = text.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
-        val result = ArrayList<SportsChannel>(minOf(3000, lines.size / 2))
+        val result = ArrayList<SportsChannel>(3000)
         var attrs = emptyMap<String, String>()
-        for (line in lines) {
+        text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { line ->
+            if (result.size >= 3000) return@forEach
             when {
                 line.startsWith("#EXTINF", true) -> attrs = parseAttrs(line)
                 !line.startsWith("#") -> {
                     val name = attrs["name"] ?: line.substringAfterLast('/').substringBefore('?').ifBlank { "Channel" }
-                    val group = attrs["group"] ?: "Live TV"
-                    val logo = attrs["logo"]
-                    result += SportsChannel("${name.lowercase()}|$line".hashCode().toString(), name, group, logo, line)
+                    result += SportsChannel("${name.lowercase()}|$line".hashCode().toString(), name, attrs["group"] ?: "Live TV", attrs["logo"], line)
                     attrs = emptyMap()
-                    if (result.size >= 3000) break
                 }
             }
         }
@@ -148,11 +157,10 @@ object SportsChannelBridge {
 
     private fun parseAttrs(line: String): Map<String, String> {
         val map = mutableMapOf<String, String>()
-        Regex("([\\w-]+)=\"([^\"]*)\"").findAll(line).forEach {
-            map[it.groupValues[1].lowercase()] = it.groupValues[2]
-        }
-        val comma = line.indexOf(',')
-        if (comma >= 0) map["name"] = line.substring(comma + 1).trim()
+        Regex("([\\w-]+)=\"([^\"]*)\"").findAll(line).forEach { map[it.groupValues[1].lowercase()] = it.groupValues[2] }
+        line.indexOf(',').takeIf { it >= 0 }?.let { map["name"] = line.substring(it + 1).trim() }
         return map
     }
+
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 }
