@@ -19,8 +19,6 @@ class ChannelIndex<T>(
     private val tokenIndex: Map<String, List<T>> = buildIndex { item ->
         tokenize(normalizedNames[item].orEmpty()) + tokenize(normalizedGroups[item].orEmpty())
     }
-    private val nameTokenIndex: Map<String, List<T>> = buildIndex { item -> tokenize(normalizedNames[item].orEmpty()) }
-    private val groupTokenIndex: Map<String, List<T>> = buildIndex { item -> tokenize(normalizedGroups[item].orEmpty()) }
     private val prefixIndex: Map<String, List<T>> = buildPrefixIndex()
 
     fun all(): List<T> = all
@@ -31,16 +29,16 @@ class ChannelIndex<T>(
     fun search(query: String, sport: String, limit: Int = 100): List<T> =
         rankedSearch(query, sport.takeUnless { it.isBlank() || it == "All" }, limit)
 
-    fun bySport(limit: Int = 3000): Map<String, List<T>> = all.asSequence()
-        .take(limit.coerceIn(1, 3000))
+    fun bySport(limit: Int = Int.MAX_VALUE): Map<String, List<T>> = all.asSequence()
+        .take(limit.coerceAtLeast(1))
         .groupBy { sports[it] ?: "Other" }
 
-    fun forSport(sport: String, limit: Int = 3000): List<T> {
+    fun forSport(sport: String, limit: Int = Int.MAX_VALUE): List<T> {
         val selected = sport.trim()
-        if (selected.isEmpty() || selected == "All") return all.take(limit.coerceIn(1, 3000))
+        if (selected.isEmpty() || selected == "All") return all.take(limit.coerceAtLeast(1))
         return all.asSequence()
             .filter { sports[it] == selected }
-            .take(limit.coerceIn(1, 3000))
+            .take(limit.coerceAtLeast(1))
             .toList()
     }
 
@@ -62,12 +60,17 @@ class ChannelIndex<T>(
         queryTokens.forEach { token ->
             tokenIndex[token]?.let(candidates::addAll)
             prefixIndex[token]?.let(candidates::addAll)
-            prefixIndex.entries.asSequence()
-                .filter { it.key.startsWith(token) }
-                .take(24)
-                .forEach { candidates.addAll(it.value) }
+            // Prefix buckets are already materialized, so avoid scanning the full inventory.
+            if (token.length < 8) {
+                var prefix = token
+                while (prefix.length < 8) {
+                    val bucket = prefixIndex[prefix]
+                    if (bucket != null) candidates.addAll(bucket)
+                    if (prefix.length >= token.length + 2) break
+                    prefix += " "
+                }
+            }
         }
-        // Short/odd queries may not have useful buckets; fall back only for those.
         if (candidates.isEmpty()) candidates.addAll(all)
 
         return candidates.asSequence()
@@ -121,7 +124,7 @@ class ChannelIndex<T>(
         return map.mapValues { (_, values) -> values.distinct() }
     }
 
-    private fun tokenize(value: String): List<String> = value.split(' ').filter { it.length >= 1 }.distinct()
+    private fun tokenize(value: String): List<String> = value.split(' ').filter { it.isNotEmpty() }.distinct()
 
     private fun normalize(value: String): String = value
         .lowercase()
