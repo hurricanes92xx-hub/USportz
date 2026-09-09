@@ -58,7 +58,7 @@ private fun eventTitle(brand: SportsBrand?, event: SportsEvent): String {
 internal fun EventArtwork(event: SportsEvent, brand: SportsBrand? = SportsPresentation.brand(event), compact: Boolean = false) {
     val height = if (compact) 108.dp else 148.dp
     val image = BrandAssets.eventLogoUrl(event, brand)
-        ?: event.leagueLogo.takeIf { it.isNotBlank() }
+        ?: event.leagueLogo?.takeIf { it.isNotBlank() }
         ?: BrandAssets.logoUrl(brand)
     val brandKey = brand?.key.orEmpty()
     Box(
