@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,10 +26,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -112,34 +113,24 @@ private fun TvRail(selected: Int, onSelect: (Int) -> Unit) {
 @Composable
 private fun TvNavButton(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    Row(
-        Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Color(0xFF163B52) else Color(0xFF101820))
-            .border(if (focused) TvUi.focusBorder else BorderStroke(1.dp, Color.Transparent), RoundedCornerShape(14.dp))
-            .onFocusChanged { focused = it.isFocused }.focusable().padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    Row(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(14.dp))
+        .background(if (selected) Color(0xFF163B52) else Color(0xFF101820))
+        .border(if (focused) TvUi.focusBorder else BorderStroke(1.dp, Color.Transparent), RoundedCornerShape(14.dp))
+        .onFocusChanged { focused = it.isFocused }.focusable().clickable(onClick = onClick).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null)
         Spacer(Modifier.width(12.dp))
         Text(label, fontSize = 17.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
-    androidx.compose.ui.input.key.onPreviewKeyEvent
-    Box(Modifier.fillMaxWidth().height(0.dp))
 }
 
 @Composable
 private fun TvHome(channels: List<TvChannel>, favorites: Set<String>, play: (String) -> Unit, favorite: (String) -> Unit) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        item {
-            TvHero("LIVE SPORTS", "Your sports, channels and events in one place", "Open Live TV or Sports to start watching")
-        }
+        item { TvHero("LIVE SPORTS", "Your sports, channels and events in one place", "Open Live TV or Sports to start watching") }
         item { TvSection("Sports") }
         item { TvSportRow() }
         item { TvSection("Your Channels") }
-        item {
-            if (channels.isEmpty()) TvEmpty("No channels loaded", "Connect a source from the mobile app first, then return to TV.")
-            else TvChannelRow(channels.take(12), favorites, play, favorite)
-        }
+        item { if (channels.isEmpty()) TvEmpty("No channels loaded", "Connect a source from the mobile app first, then return to TV.") else TvChannelRow(channels.take(12), favorites, play, favorite) }
     }
 }
 
@@ -149,9 +140,7 @@ private fun TvSports(selected: String, onSelected: (String) -> Unit, channels: L
     val filtered = if (selected == "All") channels else channels.filter { SportsCatalog.classify(it.name, it.group) == selected }
     Column(Modifier.fillMaxSize()) {
         TvSection("Sports")
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(categories) { sport -> TvFilter(sport, selected == sport) { onSelected(sport) } }
-        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(categories) { sport -> TvFilter(sport, selected == sport) { onSelected(sport) } } }
         Spacer(Modifier.height(20.dp))
         if (selected == "All") TvEmpty("Choose a sport", "Use the remote to select a category and see matching channels.")
         else if (filtered.isEmpty()) TvEmpty("No ${selected.lowercase()} channels", "No indexed channels matched this sport yet.")
@@ -161,21 +150,13 @@ private fun TvSports(selected: String, onSelected: (String) -> Unit, channels: L
 
 @Composable
 private fun TvChannels(channels: List<TvChannel>, favorites: Set<String>, play: (String) -> Unit, favorite: (String) -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        TvSection("Live TV")
-        if (channels.isEmpty()) TvEmpty("No channels loaded", "Connect Xtream Codes or M3U/M3U8 in the mobile app first.")
-        else TvChannelList(channels, favorites, play, favorite)
-    }
+    Column(Modifier.fillMaxSize()) { TvSection("Live TV"); if (channels.isEmpty()) TvEmpty("No channels loaded", "Connect Xtream Codes or M3U/M3U8 in the mobile app first.") else TvChannelList(channels, favorites, play, favorite) }
 }
 
 @Composable
 private fun TvFavorites(channels: List<TvChannel>, favorites: Set<String>, play: (String) -> Unit, favorite: (String) -> Unit) {
     val list = channels.filter { favorites.contains(it.id) }
-    Column(Modifier.fillMaxSize()) {
-        TvSection("Favorites")
-        if (list.isEmpty()) TvEmpty("No favorites", "Select the star on a channel to keep it here.")
-        else TvChannelList(list, favorites, play, favorite)
-    }
+    Column(Modifier.fillMaxSize()) { TvSection("Favorites"); if (list.isEmpty()) TvEmpty("No favorites", "Select the star on a channel to keep it here.") else TvChannelList(list, favorites, play, favorite) }
 }
 
 @Composable
@@ -191,21 +172,14 @@ private fun TvHero(kicker: String, title: String, subtitle: String) {
 }
 
 @Composable
-private fun TvSportRow() {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        items(SportsCatalog.categories.filter { it != "All" }.take(8)) { sport ->
-            TvTile(sport) {}
-        }
-    }
-}
+private fun TvSportRow() { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(SportsCatalog.categories.filter { it != "All" }.take(8)) { sport -> TvTile(sport) {} } } }
 
 @Composable
 private fun TvFilter(text: String, selected: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    Box(Modifier.widthIn(min = 118.dp).height(52.dp).clip(RoundedCornerShape(14.dp))
-        .background(if (selected) Color(0xFF17425B) else Color(0xFF101820))
+    Box(Modifier.widthIn(min = 118.dp).height(52.dp).clip(RoundedCornerShape(14.dp)).background(if (selected) Color(0xFF17425B) else Color(0xFF101820))
         .border(if (focused) TvUi.focusBorder else BorderStroke(1.dp, Color.Transparent), RoundedCornerShape(14.dp))
-        .onFocusChanged { focused = it.isFocused }.focusable().padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
+        .onFocusChanged { focused = it.isFocused }.focusable().clickable(onClick = onClick).padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
         Text(text, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
 }
@@ -215,21 +189,17 @@ private fun TvTile(text: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Column(Modifier.width(145.dp).height(100.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF101820))
         .border(if (focused) TvUi.focusBorder else BorderStroke(1.dp, Color.Transparent), RoundedCornerShape(16.dp))
-        .onFocusChanged { focused = it.isFocused }.focusable().padding(16.dp), verticalArrangement = Arrangement.Center) {
+        .onFocusChanged { focused = it.isFocused }.focusable().clickable(onClick = onClick).padding(16.dp), verticalArrangement = Arrangement.Center) {
         Icon(Icons.Default.Sports, null, tint = Color(0xFF65C9FF), modifier = Modifier.size(28.dp))
         Text(text, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 7.dp))
     }
 }
 
 @Composable
-private fun TvChannelRow(channels: List<TvChannel>, favorites: Set<String>, play: (String) -> Unit, favorite: (String) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(channels, key = { it.id }) { TvChannelCard(it, favorites.contains(it.id), play, favorite) } }
-}
+private fun TvChannelRow(channels: List<TvChannel>, favorites: Set<String>, play: (String) -> Unit, favorite: (String) -> Unit) { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(channels, key = { it.id }) { TvChannelCard(it, favorites.contains(it.id), play, favorite) } } }
 
 @Composable
-private fun TvChannelList(channels: List<TvChannel>, favorites: Set<String>, play: (String) -> Unit, favorite: (String) -> Unit) {
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) { items(channels, key = { it.id }) { TvChannelCard(it, favorites.contains(it.id), play, favorite) } }
-}
+private fun TvChannelList(channels: List<TvChannel>, favorites: Set<String>, play: (String) -> Unit, favorite: (String) -> Unit) { LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) { items(channels, key = { it.id }) { TvChannelCard(it, favorites.contains(it.id), play, favorite) } } }
 
 @Composable
 private fun TvChannelCard(channel: TvChannel, isFavorite: Boolean, play: (String) -> Unit, favorite: (String) -> Unit) {
@@ -239,7 +209,7 @@ private fun TvChannelCard(channel: TvChannel, isFavorite: Boolean, play: (String
         .onFocusChanged { focused = it.isFocused }.focusable().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF16242E)), contentAlignment = Alignment.Center) { Icon(Icons.Default.LiveTv, null) }
         Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) { Text(channel.name, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1); Text(channel.group.ifBlank { "Live TV" }, color = Color.Gray, fontSize = 13.sp, maxLines = 1) }
+        Column(Modifier.weight(1f).clickable { play(channel.url) }) { Text(channel.name, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1); Text(channel.group.ifBlank { "Live TV" }, color = Color.Gray, fontSize = 13.sp, maxLines = 1) }
         TvButton(if (isFavorite) "★" else "☆", Icons.Default.StarBorder) { favorite(channel.id) }
         Spacer(Modifier.width(8.dp))
         TvButton("Play", Icons.Default.PlayArrow) { play(channel.url) }
@@ -251,20 +221,14 @@ private fun TvButton(text: String, icon: androidx.compose.ui.graphics.vector.Ima
     var focused by remember { mutableStateOf(false) }
     Row(Modifier.height(52.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF16242E))
         .border(if (focused) TvUi.focusBorder else BorderStroke(1.dp, Color.Transparent), RoundedCornerShape(12.dp))
-        .onFocusChanged { focused = it.isFocused }.focusable().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, modifier = Modifier.size(21.dp))
-        Spacer(Modifier.width(7.dp))
-        Text(text, fontWeight = FontWeight.Bold)
+        .onFocusChanged { focused = it.isFocused }.focusable().clickable(onClick = onClick).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, modifier = Modifier.size(21.dp)); Spacer(Modifier.width(7.dp)); Text(text, fontWeight = FontWeight.Bold)
     }
 }
 
-@Composable
-private fun TvSection(text: String) { Text(text, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold) }
+@Composable private fun TvSection(text: String) { Text(text, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold) }
 
-@Composable
-private fun TvEmpty(title: String, message: String) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) { Column(Modifier.padding(24.dp)) { Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold); Text(message, color = Color.Gray, modifier = Modifier.padding(top = 7.dp)) } }
-}
+@Composable private fun TvEmpty(title: String, message: String) { Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) { Column(Modifier.padding(24.dp)) { Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold); Text(message, color = Color.Gray, modifier = Modifier.padding(top = 7.dp)) } } }
 
 @Composable
 private fun TvPlayer(url: String, onBack: () -> Unit) {
@@ -273,7 +237,7 @@ private fun TvPlayer(url: String, onBack: () -> Unit) {
     DisposableEffect(player) { onDispose { player.release() } }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(factory = { PlayerView(it).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
-        TvButton("Back", Icons.Default.ArrowBack) { onBack() }
+        Box(Modifier.align(Alignment.TopStart).padding(20.dp)) { TvButton("Back", Icons.Default.ArrowBack) { onBack() } }
     }
 }
 
@@ -295,31 +259,36 @@ private fun loadChannels(prefs: android.content.SharedPreferences): Pair<List<Tv
         else -> return emptyList<TvChannel>() to "No saved source"
     }
     return try {
-        val text = URL(source).openConnection().run {
-            (this as HttpURLConnection).apply { connectTimeout = 8000; readTimeout = 12000; requestMethod = "GET" }.let { it.inputStream.bufferedReader().use { r -> r.readText() } }
-        }
-        parseTvM3u(text, source) to "Loaded ${parseTvM3u(text, source).size} channels"
+        val connection = URL(source).openConnection() as HttpURLConnection
+        connection.connectTimeout = 8000
+        connection.readTimeout = 12000
+        connection.requestMethod = "GET"
+        val text = connection.inputStream.bufferedReader().use { it.readText() }
+        connection.disconnect()
+        val parsed = parseTvM3u(text)
+        parsed to "Loaded ${parsed.size} channels"
     } catch (e: Exception) {
         emptyList<TvChannel>() to "Source error: ${e.message ?: "unable to load"}"
     }
 }
 
-private fun parseTvM3u(text: String, source: String): List<TvChannel> {
-    val lines = text.lineSequence().toList()
-    val result = ArrayList<TvChannel>(minOf(3000, lines.size / 2))
-    var pending: Map<String, String> = emptyMap()
-    for (line0 in lines) {
-        val line = line0.trim()
+private fun parseTvM3u(text: String): List<TvChannel> {
+    val result = ArrayList<TvChannel>(minOf(3000, text.length / 80))
+    var name = ""
+    var group = ""
+    var id = ""
+    for (raw in text.lineSequence()) {
+        val line = raw.trim()
         if (line.startsWith("#EXTINF", true)) {
-            pending = mapOf(
-                "id" to (Regex("tvg-id=\"([^\"]*)\"").find(line)?.groupValues?.getOrNull(1).orEmpty()),
-                "group" to (Regex("group-title=\"([^\"]*)\"").find(line)?.groupValues?.getOrNull(1).orEmpty()),
-                "name" to line.substringAfterLast(',').trim()
-            )
-        } else if (line.isNotBlank() && !line.startsWith("#") && pending.isNotEmpty()) {
-            val id = pending["id"].orEmpty().ifBlank { "${pending["name"]}|$line" }.hashCode().toString()
-            result += TvChannel(id, pending["name"].orEmpty().ifBlank { "Channel" }, pending["group"].orEmpty(), line)
-            pending = emptyMap()
+            name = line.substringAfterLast(',').trim().ifBlank { "Channel" }
+            group = Regex("group-title=\"([^\"]*)\"").find(line)?.groupValues?.getOrNull(1).orEmpty()
+            id = Regex("tvg-id=\"([^\"]*)\"").find(line)?.groupValues?.getOrNull(1).orEmpty()
+        } else if (line.isNotBlank() && !line.startsWith("#") && name.isNotBlank()) {
+            val stableId = id.ifBlank { "$name|$line" }.hashCode().toString()
+            result += TvChannel(stableId, name, group, line)
+            name = ""
+            group = ""
+            id = ""
             if (result.size >= 3000) break
         }
     }
