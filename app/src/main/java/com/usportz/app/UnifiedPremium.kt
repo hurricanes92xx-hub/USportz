@@ -42,7 +42,7 @@ internal fun USportzApp(store: SourceStore) {
         loading = true
         val local = SportsChannelBridge.restoreCached(context); if (local.isNotEmpty()) channels = local
         channels = SportsChannelBridge.load(context, refresh > 0)
-        runCatching { SportsSchedule.load(refresh > 0, channels) }.onSuccess { events = it }
+        runCatching { SportsSchedule.load(context, refresh > 0, channels) }.onSuccess { events = it }
         loading = false
     }
     fun play(url: String) { context.startActivity(Intent(context, RichPlayerActivity::class.java).putExtra(RichPlayerActivity.EXTRA_URL, url)) }
