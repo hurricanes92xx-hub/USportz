@@ -33,13 +33,16 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 class RichSportsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { RichSportsApp() }
+    }
+
+    fun openSourceApp() {
+        startActivity(Intent(this, MainActivity::class.java))
     }
 }
 
@@ -52,6 +55,7 @@ private val Pink = Color(0xFFFF3E91)
 
 @Composable
 private fun RichSportsApp() {
+    val activity = androidx.compose.ui.platform.LocalContext.current as RichSportsActivity
     var events by remember { mutableStateOf<List<SportsEvent>>(emptyList()) }
     var selectedSport by remember { mutableStateOf("All") }
     var selectedMode by remember { mutableStateOf("All") }
@@ -81,9 +85,7 @@ private fun RichSportsApp() {
             containerColor = Ink,
             bottomBar = {
                 RichBottomBar(tab) {
-                    if (it == 4) {
-                        startActivity(Intent(this@RichSportsActivity, MainActivity::class.java))
-                    } else tab = it
+                    if (it >= 2) activity.openSourceApp() else tab = it
                 }
             }
         ) { pad ->
@@ -92,7 +94,7 @@ private fun RichSportsApp() {
                 contentPadding = PaddingValues(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                item { RichHeader(onRefresh = ::refresh, loading = loading) }
+                item { RichHeader(onRefresh = ::refresh, loading = loading, onSources = activity::openSourceApp) }
                 item { NoticeStrip() }
                 item { BrandRail(selectedSport) { selectedSport = it } }
                 item { ModeRail(selectedMode) { selectedMode = it } }
@@ -113,19 +115,15 @@ private fun RichSportsApp() {
                         items(upcoming.take(18), key = { "today-${it.id}" }) { RichEventCard(it, false) }
                     }
                 }
-                if (!loading && live.isEmpty() && upcoming.isEmpty()) {
-                    item { EmptyRich() }
-                }
+                if (!loading && live.isEmpty() && upcoming.isEmpty()) item { EmptyRich() }
             }
         }
     }
 }
 
 @Composable
-private fun RichHeader(onRefresh: () -> Unit, loading: Boolean) {
-    Box(
-        Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF1A2034), Color(0xFF1B1027), Ink))).padding(horizontal = 18.dp, vertical = 18.dp)
-    ) {
+private fun RichHeader(onRefresh: () -> Unit, loading: Boolean, onSources: () -> Unit) {
+    Box(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF1A2034), Color(0xFF1B1027), Ink))).padding(horizontal = 18.dp, vertical = 18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Column {
                 Text("USportz", fontSize = 31.sp, fontWeight = FontWeight.ExtraBold)
@@ -133,8 +131,7 @@ private fun RichHeader(onRefresh: () -> Unit, loading: Boolean) {
             }
             Row {
                 IconButton(onClick = onRefresh, enabled = !loading) { Icon(Icons.Default.Refresh, "Refresh", tint = Color.White) }
-                IconButton(onClick = { }) { Icon(Icons.Default.FavoriteBorder, "Favorites", tint = Color.White) }
-                IconButton(onClick = { }) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
+                IconButton(onClick = onSources) { Icon(Icons.Default.Settings, "Sources", tint = Color.White) }
             }
         }
     }
@@ -142,12 +139,7 @@ private fun RichHeader(onRefresh: () -> Unit, loading: Boolean) {
 
 @Composable
 private fun NoticeStrip() {
-    Surface(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        shape = RoundedCornerShape(22.dp),
-        color = Color(0xFF151823),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF292D3B))
-    ) {
+    Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(22.dp), color = Color(0xFF151823), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF292D3B))) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("◉", color = Cyan, fontSize = 17.sp)
             Spacer(Modifier.width(10.dp))
@@ -165,10 +157,9 @@ private fun BrandRail(selected: String, onSelected: (String) -> Unit) {
         items(brands) { (key, label) ->
             val active = selected == key
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(72.dp).clickable { onSelected(key) }) {
-                Box(
-                    Modifier.size(58.dp).shadow(if (active) 8.dp else 0.dp, CircleShape).background(if (active) Brush.linearGradient(listOf(Purple, Cyan)) else Brush.linearGradient(listOf(Color(0xFF202433), Color(0xFF10131D))), CircleShape).border(1.dp, if (active) Cyan else Color(0xFF303546), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) { Text(label, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = if (label.length > 4) 9.sp else 13.sp) }
+                Box(Modifier.size(58.dp).shadow(if (active) 8.dp else 0.dp, CircleShape).background(if (active) Brush.linearGradient(listOf(Purple, Cyan)) else Brush.linearGradient(listOf(Color(0xFF202433), Color(0xFF10131D))), CircleShape).border(1.dp, if (active) Cyan else Color(0xFF303546), CircleShape), contentAlignment = Alignment.Center) {
+                    Text(label, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = if (label.length > 4) 9.sp else 13.sp)
+                }
                 Text(key, color = if (active) Color.White else Color(0xFF858DA2), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
             }
         }
@@ -180,12 +171,7 @@ private fun ModeRail(selected: String, onSelected: (String) -> Unit) {
     val modes = listOf("All", "Live now", "Today's", "Upcoming")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         modes.forEach { mode ->
-            FilterChip(
-                selected = selected == mode,
-                onClick = { onSelected(mode) },
-                label = { Text(mode, fontWeight = FontWeight.Bold) },
-                leadingIcon = { Icon(if (mode == "Live now") Icons.Default.Sensors else if (mode == "Today's") Icons.Default.Today else if (mode == "Upcoming") Icons.Default.Schedule else Icons.Default.Check, null, Modifier.size(17.dp)) }
-            )
+            FilterChip(selected = selected == mode, onClick = { onSelected(mode) }, label = { Text(mode, fontWeight = FontWeight.Bold) }, leadingIcon = { Icon(if (mode == "Live now") Icons.Default.Sensors else if (mode == "Today's") Icons.Default.Today else if (mode == "Upcoming") Icons.Default.Schedule else Icons.Default.Check, null, Modifier.size(17.dp)) })
         }
     }
 }
@@ -204,11 +190,7 @@ private fun SectionTitle(title: String, count: String, accent: Color) {
 @Composable
 private fun RichEventCard(event: SportsEvent, live: Boolean) {
     val borderBrush = Brush.linearGradient(listOf(Purple, Color(0xFF4B1F6F), Cyan))
-    Card(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp).border(1.5.dp, borderBrush, RoundedCornerShape(20.dp)),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Panel)
-    ) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp).border(1.5.dp, borderBrush, RoundedCornerShape(20.dp)), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column {
             if (!event.leagueLogo.isNullOrBlank()) {
                 Box(Modifier.fillMaxWidth().height(54.dp).background(Brush.horizontalGradient(listOf(Color(0xFF1C1630), Color(0xFF0E1924))))) {
@@ -233,11 +215,8 @@ private fun RichEventCard(event: SportsEvent, live: Boolean) {
                     TeamRow(event.competitors.getOrNull(1) ?: "TBD", event.competitorLogos.getOrNull(1))
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    if (live) {
-                        Box(Modifier.background(Color(0x3322D9FF), RoundedCornerShape(20.dp)).padding(horizontal = 9.dp, vertical = 5.dp)) { Text("● LIVE", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) }
-                    } else {
-                        Text(SportsPresentation.status(event), color = Color(0xFF8E96AB), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
+                    if (live) Box(Modifier.background(Color(0x3322D9FF), RoundedCornerShape(20.dp)).padding(horizontal = 9.dp, vertical = 5.dp)) { Text("● LIVE", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) }
+                    else Text(SportsPresentation.status(event), color = Color(0xFF8E96AB), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     if (event.detail.isNotBlank()) Text(event.detail, color = Color(0xFF7C8498), fontSize = 10.sp, maxLines = 1, modifier = Modifier.padding(top = 5.dp))
                 }
             }
@@ -247,9 +226,7 @@ private fun RichEventCard(event: SportsEvent, live: Boolean) {
                     Text("WATCH LIVE", color = Cyan, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                     Spacer(Modifier.width(5.dp))
                     Icon(Icons.Default.PlayCircle, null, tint = Cyan, modifier = Modifier.size(20.dp))
-                } else {
-                    Text("EVENT", color = Color(0xFF8F98AD), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                }
+                } else Text("EVENT", color = Color(0xFF8F98AD), fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -258,11 +235,8 @@ private fun RichEventCard(event: SportsEvent, live: Boolean) {
 @Composable
 private fun TeamRow(name: String, logo: String?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (!logo.isNullOrBlank()) {
-            AsyncImage(logo, name, Modifier.size(36.dp), contentScale = ContentScale.Fit)
-        } else {
-            Box(Modifier.size(36.dp).background(Color(0xFF252A39), CircleShape), contentAlignment = Alignment.Center) { Text(name.take(2).uppercase(), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) }
-        }
+        if (!logo.isNullOrBlank()) AsyncImage(logo, name, Modifier.size(36.dp), contentScale = ContentScale.Fit)
+        else Box(Modifier.size(36.dp).background(Color(0xFF252A39), CircleShape), contentAlignment = Alignment.Center) { Text(name.take(2).uppercase(), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) }
         Spacer(Modifier.width(10.dp))
         Text(name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -283,9 +257,7 @@ private fun EmptyRich() {
 private fun RichBottomBar(selected: Int, onSelect: (Int) -> Unit) {
     NavigationBar(containerColor = Color(0xFF11131D)) {
         val items = listOf(Icons.Default.Home to "Home", Icons.Default.SportsScore to "Sports", Icons.Default.LiveTv to "Live TV", Icons.Default.Star to "Favorites", Icons.Default.Settings to "Sources")
-        items.forEachIndexed { index, item ->
-            NavigationBarItem(selected = selected == index, onClick = { onSelect(index) }, icon = { Icon(item.first, item.second) }, label = { Text(item.second) })
-        }
+        items.forEachIndexed { index, item -> NavigationBarItem(selected = selected == index, onClick = { onSelect(index) }, icon = { Icon(item.first, item.second) }, label = { Text(item.second) }) }
     }
 }
 
