@@ -45,6 +45,9 @@ object SportsChannelBridge {
         } else cached
     }
 
+    /** Current source inventory, populated by the premium shell before schedule loading. */
+    fun cachedChannels(): List<SportsChannel> = cached
+
     fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? =
         channels.asSequence()
             .map { it to SportsSchedule.matchChannel(event, it.name, it.group) }
