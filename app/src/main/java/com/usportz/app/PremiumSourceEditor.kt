@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @Composable
 fun Editor(s: SourceStore, done: () -> Unit) {
@@ -42,7 +43,7 @@ fun Editor(s: SourceStore, done: () -> Unit) {
                 s.saveM3u(m3u) { ok, msg -> busy = false; status = msg; if (ok) done() }
             }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text(if (busy) "INDEXING…" else "LOAD PLAYLIST") }
 
-            if (status.isNotBlank()) Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = androidx.compose.ui.unit.sp(12), modifier = Modifier.padding(top = 8.dp))
+            if (status.isNotBlank()) Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
