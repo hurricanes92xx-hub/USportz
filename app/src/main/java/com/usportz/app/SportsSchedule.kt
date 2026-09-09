@@ -44,31 +44,28 @@ object SportsSchedule {
         Feed("racing", "formula-1"), Feed("racing", "indycar"), Feed("racing", "motogp"), Feed("tennis", "atp"), Feed("tennis", "wta")
     )
 
-    suspend fun load(context: Context, forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = withContext(Dispatchers.IO) {
+    /** Compatibility overload for existing screens; TV metadata is added by the Context-aware loader. */
+    suspend fun load(forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = loadInternal(null, forceRefresh, sourceChannels)
+
+    suspend fun load(context: Context, forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = loadInternal(context, forceRefresh, sourceChannels)
+
+    private suspend fun loadInternal(context: Context?, forceRefresh: Boolean, sourceChannels: List<SportsChannel>): List<SportsEvent> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val source = if (sourceChannels.isNotEmpty()) sourceChannels else SportsChannelBridge.cachedChannels()
         if (!forceRefresh && cached.isNotEmpty() && now - cachedAt < CACHE_TTL_MS) return@withContext prioritizeSourceMatches(cached, source)
 
         val (espn, dedicated, tv) = coroutineScope {
-            val espnJob = async(Dispatchers.IO) {
-                feeds.map { feed -> async(Dispatchers.IO) { fetch(feed) } }.awaitAll().flatten()
-            }
+            val espnJob = async(Dispatchers.IO) { feeds.map { feed -> async(Dispatchers.IO) { fetch(feed) } }.awaitAll().flatten() }
             val dedicatedJob = async(Dispatchers.IO) { DedicatedSchedule.load() }
-            val tvJob = async(Dispatchers.IO) { RoninTvSchedule.load(context) }
+            val tvJob = async(Dispatchers.IO) { context?.let { RoninTvSchedule.load(it) } ?: emptyList() }
             Triple(espnJob.await(), dedicatedJob.await(), tvJob.await())
         }
-        val fresh = (espn + dedicated + tv)
-            .distinctBy { it.id }
+        val fresh = (espn + dedicated + tv).distinctBy { it.id }
             .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { it.startTime })
             .take(1000)
-
         if (fresh.isNotEmpty()) {
-            cached = fresh
-            cachedAt = now
-            prioritizeSourceMatches(fresh, source)
-        } else {
-            prioritizeSourceMatches(cached, source)
-        }
+            cached = fresh; cachedAt = now; prioritizeSourceMatches(fresh, source)
+        } else prioritizeSourceMatches(cached, source)
     }
 
     fun isCacheFresh(): Boolean = cached.isNotEmpty() && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS
