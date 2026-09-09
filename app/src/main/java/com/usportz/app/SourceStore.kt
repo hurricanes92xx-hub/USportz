@@ -29,12 +29,19 @@ class SourceStore(private val context: Context) {
         private set(value) { prefs.edit().putString("playlist", value).apply() }
 
     fun saveXtream(base: String, username: String, password: String, done: (Boolean, String) -> Unit, progress: (String) -> Unit = {}) {
-        val cleanBase = base.trimEnd('/'); val cleanUser = username.trim(); val cleanPass = password
-        if (cleanBase.isBlank() || cleanUser.isBlank() || cleanPass.isBlank()) { main.post { done(false, "Enter server, username and password") }; return }
+        val cleanUser = username.trim(); val cleanPass = password
+        val normalizedServer = SportsChannelBridge.normalizeXtreamServer(base)
+        if (normalizedServer.isBlank() || cleanUser.isBlank() || cleanPass.isBlank()) {
+            main.post { done(false, "Enter a valid Xtream server, username and password") }
+            return
+        }
         io.launch {
-            main.post { progress("Authenticating…") }
-            if (!SportsChannelBridge.validateXtream(cleanBase, cleanUser, cleanPass)) { main.post { done(false, "Xtream login failed — server rejected the connection") }; return@launch }
-            server = cleanBase; user = cleanUser; pass = cleanPass; playlist = ""
+            main.post { progress("Authenticating Xtream…") }
+            if (!SportsChannelBridge.validateXtream(normalizedServer, cleanUser, cleanPass)) {
+                main.post { done(false, "Xtream login failed — check the server URL, username and password") }
+                return@launch
+            }
+            server = normalizedServer; user = cleanUser; pass = cleanPass; playlist = ""
             main.post { progress("Connected • indexing channels in background…"); done(true, "Connected • indexing started") }
             io.launch {
                 runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
