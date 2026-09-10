@@ -5,6 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 /**
  * Persistent channel inventory kept outside the Compose/UI state.
@@ -87,7 +88,7 @@ class ChannelVault(context: Context) {
 
         if (terms.isEmpty()) return@withContext emptyList()
         val where = terms.joinToString(" OR ") { "($COL_NORMALIZED LIKE ? OR LOWER($COL_GROUP) LIKE ? OR LOWER($COL_CATEGORY) LIKE ?)" }
-        val args = ArrayList<String>(1 + terms.size * 3)
+        val args = ArrayList<String>(1 + terms.size * 3 + 1)
         args += sourceKey
         terms.forEach { term ->
             val like = "%${term.replace("%", "")}%"
@@ -95,9 +96,10 @@ class ChannelVault(context: Context) {
             args += like
             args += like
         }
+        args += limit.toString()
         queryChannels(
             "SELECT $COL_ID,$COL_NAME,$COL_GROUP,$COL_LOGO,$COL_URL FROM $TABLE WHERE $COL_SOURCE = ? AND ($where) ORDER BY LOWER($COL_NAME) LIMIT ?",
-            args + limit.toString()
+            args.toTypedArray()
         )
     }
 
@@ -150,17 +152,22 @@ class ChannelVault(context: Context) {
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
     }
 
-    private companion object {
-        const val DB_NAME = "usportz_channel_vault.db"
-        const val TABLE = "channels"
-        const val COL_ROW = "row_key"
-        const val COL_SOURCE = "source_key"
-        const val COL_ID = "channel_id"
-        const val COL_NAME = "name"
-        const val COL_GROUP = "group_name"
-        const val COL_LOGO = "logo"
-        const val COL_URL = "url"
-        const val COL_NORMALIZED = "normalized_name"
-        const val COL_CATEGORY = "category"
+    companion object {
+        fun key(store: SourceStore): String {
+            val raw = listOf(store.server.trim(), store.user, store.pass, store.playlist.trim()).joinToString("\u0000")
+            return MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
+        }
+
+        private const val DB_NAME = "usportz_channel_vault.db"
+        private const val TABLE = "channels"
+        private const val COL_ROW = "row_key"
+        private const val COL_SOURCE = "source_key"
+        private const val COL_ID = "channel_id"
+        private const val COL_NAME = "name"
+        private const val COL_GROUP = "group_name"
+        private const val COL_LOGO = "logo"
+        private const val COL_URL = "url"
+        private const val COL_NORMALIZED = "normalized_name"
+        private const val COL_CATEGORY = "category"
     }
 }
