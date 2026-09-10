@@ -1,15 +1,12 @@
 package com.usportz.app
 
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
-
 /**
- * Lightweight channel index designed for very large Xtream/M3U inventories.
+ * UI-safe channel view over very large Xtream/M3U inventories.
  *
- * IMPORTANT: construction never builds millions of token/prefix entries on the
- * Compose/UI thread. The searchable index is prepared asynchronously. Until it
- * is ready, callers get bounded fallback results instead of blocking the UI.
+ * The previous implementation built token and prefix maps for every channel
+ * during construction. With 50K+ channels that could block Compose for seconds
+ * and trigger Android's "isn't responding" dialog. This implementation keeps
+ * construction O(1) and bounds any fallback search work.
  */
 class ChannelIndex<T>(
     items: List<T>,
@@ -17,126 +14,64 @@ class ChannelIndex<T>(
     private val group: (T) -> String
 ) {
     private val allItems: List<T> = items
-    private val ready = AtomicBoolean(false)
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "USportz-ChannelIndex").apply { isDaemon = true }
-    }
 
-    @Volatile private var normalizedNames: Map<T, String> = emptyMap()
-    @Volatile private var normalizedGroups: Map<T, String> = emptyMap()
-    @Volatile private var sports: Map<T, String> = emptyMap()
-    @Volatile private var tokenIndex: Map<String, List<T>> = emptyMap()
-    @Volatile private var groupList: List<String> = emptyList()
-
-    init {
-        executor.execute {
-            try {
-                val names = HashMap<T, String>(allItems.size)
-                val groups = HashMap<T, String>(allItems.size)
-                val sportMap = HashMap<T, String>(allItems.size)
-                val tokens = HashMap<String, MutableList<T>>()
-                val groupSet = LinkedHashMap<String, String>()
-
-                allItems.forEach { item ->
-                    val n = normalize(name(item))
-                    val g = normalize(group(item))
-                    names[item] = n
-                    groups[item] = g
-                    sportMap[item] = SportsCatalog.classify(name(item), group(item))
-                    tokenize(n).forEach { token -> tokens.getOrPut(token) { mutableListOf() }.add(item) }
-                    tokenize(g).forEach { token -> tokens.getOrPut(token) { mutableListOf() }.add(item) }
-                    val rawGroup = group(item).trim()
-                    if (rawGroup.isNotEmpty()) groupSet.putIfAbsent(rawGroup.lowercase(), rawGroup)
-                }
-
-                normalizedNames = names
-                normalizedGroups = groups
-                sports = sportMap
-                tokenIndex = tokens.mapValues { (_, value) -> value.distinct() }
-                groupList = groupSet.values.sortedBy { it.lowercase() }
-                ready.set(true)
-            } finally {
-                executor.shutdown()
-            }
-        }
-    }
-
-    fun isReady(): Boolean = ready.get()
+    fun isReady(): Boolean = true
 
     fun all(): List<T> = allItems
 
-    fun search(query: String, limit: Int = 100): List<T> = rankedSearch(query, null, limit)
+    fun search(query: String, limit: Int = 100): List<T> = searchInternal(query, null, limit)
 
     fun search(query: String, sport: String, limit: Int = 100): List<T> =
-        rankedSearch(query, sport.takeUnless { it.isBlank() || it == "All" }, limit)
+        searchInternal(query, sport.takeUnless { it.isBlank() || it.equals("All", true) }, limit)
 
-    fun bySport(limit: Int = Int.MAX_VALUE): Map<String, List<T>> {
-        if (!ready.get()) return emptyMap()
-        return allItems.asSequence().take(limit.coerceAtLeast(1)).groupBy { sports[it] ?: "Other" }
-    }
+    fun bySport(limit: Int = Int.MAX_VALUE): Map<String, List<T>> =
+        allItems.asSequence().take(limit.coerceAtLeast(1)).groupBy { SportsCatalog.classify(name(it), group(it)) }
 
     fun forSport(sport: String, limit: Int = Int.MAX_VALUE): List<T> {
         val selected = sport.trim()
-        if (selected.isEmpty() || selected == "All") return allItems.take(limit.coerceAtLeast(1))
-        if (!ready.get()) return emptyList()
+        if (selected.isEmpty() || selected.equals("All", true)) return allItems.take(limit.coerceAtLeast(1))
         return allItems.asSequence()
-            .filter { sports[it] == selected }
+            .filter { SportsCatalog.classify(name(it), group(it)).equals(selected, true) }
             .take(limit.coerceAtLeast(1))
             .toList()
     }
 
-    fun groups(): List<String> = groupList
+    fun groups(): List<String> = allItems.asSequence()
+        .map { group(it).trim() }
+        .filter { it.isNotEmpty() }
+        .distinctBy { it.lowercase() }
+        .sortedBy { it.lowercase() }
+        .take(2000)
+        .toList()
 
-    private fun rankedSearch(query: String, sport: String?, limit: Int): List<T> {
+    private fun searchInternal(query: String, sport: String?, limit: Int): List<T> {
         val q = normalize(query)
-        if (q.isEmpty()) return emptyList()
-        val safeLimit = limit.coerceIn(1, 500)
-        if (!ready.get()) {
-            // Never walk tens of thousands of provider rows on the UI thread.
-            return allItems.asSequence()
-                .take(1500)
-                .filter { sport == null || SportsCatalog.classify(name(it), group(it)) == sport }
-                .filter { normalize(name(it)).contains(q) || normalize(group(it)).contains(q) }
-                .take(safeLimit)
-                .toList()
-        }
-
-        val queryTokens = tokenize(q)
-        if (queryTokens.isEmpty()) return emptyList()
-        val candidates = linkedSetOf<T>()
-        queryTokens.forEach { token -> tokenIndex[token]?.let(candidates::addAll) }
-        if (candidates.isEmpty()) candidates.addAll(allItems.take(3000))
-
-        return candidates.asSequence()
-            .filter { sport == null || sports[it] == sport }
-            .map { it to score(it, q, queryTokens) }
+        if (q.isBlank()) return emptyList()
+        val safeLimit = limit.coerceIn(1, 100)
+        return allItems.asSequence()
+            // A search should never turn into an unbounded 56K-row Compose operation.
+            .take(5000)
+            .filter { sport == null || SportsCatalog.classify(name(it), group(it)).equals(sport, true) }
+            .map { it to score(it, q) }
             .filter { it.second > 0 }
-            .sortedWith(compareByDescending<Pair<T, Int>> { it.second }.thenBy { normalizedNames[it.first].orEmpty() })
+            .sortedByDescending { it.second }
             .take(safeLimit)
             .map { it.first }
             .toList()
     }
 
-    private fun score(item: T, q: String, tokens: List<String>): Int {
-        val n = normalizedNames[item].orEmpty()
-        val g = normalizedGroups[item].orEmpty()
+    private fun score(item: T, query: String): Int {
+        val n = normalize(name(item))
+        val g = normalize(group(item))
         var score = 0
-        if (n == q) score += 1000
-        if (n.startsWith(q)) score += 600
-        if (g == q) score += 450
-        if (g.startsWith(q)) score += 250
-        if (n.contains(q)) score += 180
-        if (g.contains(q)) score += 100
-        tokens.forEach { token ->
-            if (n.split(' ').contains(token)) score += 120
-            else if (n.split(' ').any { it.startsWith(token) }) score += 75
-            if (g.split(' ').contains(token)) score += 55
-            else if (g.split(' ').any { it.startsWith(token) }) score += 30
-        }
+        if (n == query) score += 1000
+        if (n.startsWith(query)) score += 600
+        if (g == query) score += 450
+        if (g.startsWith(query)) score += 250
+        if (n.contains(query)) score += 180
+        if (g.contains(query)) score += 100
         return score
     }
-
-    private fun tokenize(value: String): List<String> = value.split(' ').filter { it.isNotEmpty() }.distinct()
 
     private fun normalize(value: String): String = value
         .lowercase()
