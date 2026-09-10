@@ -63,7 +63,11 @@ internal fun USportzStableApp(store: SourceStore) {
                 }
             },
             bottomBar = {
-                NavigationBar(containerColor = Color(0xFF0D1018)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     TabButton(StableTab.HOME, tab, Icons.Default.Home) { tab = it }
                     TabButton(StableTab.LIVE, tab, Icons.Default.LiveTv) { tab = it }
                     TabButton(StableTab.SEARCH, tab, Icons.Default.Search) { tab = it }
@@ -74,8 +78,8 @@ internal fun USportzStableApp(store: SourceStore) {
             Column(Modifier.fillMaxSize().padding(pad)) {
                 when (tab) {
                     StableTab.HOME -> HomeScreen(channels)
-                    StableTab.LIVE -> LiveScreen(channels, openPlayer)
-                    StableTab.SEARCH -> SearchScreen(channels, openPlayer)
+                    StableTab.LIVE -> LiveScreen(channels, ::openPlayer)
+                    StableTab.SEARCH -> SearchScreen(channels, ::openPlayer)
                     StableTab.SOURCES -> StableSources(store) { refresh++ }
                 }
             }
@@ -85,12 +89,13 @@ internal fun USportzStableApp(store: SourceStore) {
 
 @Composable
 private fun TabButton(tab: StableTab, selected: StableTab, icon: androidx.compose.ui.graphics.vector.ImageVector, onSelect: (StableTab) -> Unit) {
-    NavigationBarItem(
-        selected = selected == tab,
-        onClick = { onSelect(tab) },
-        icon = { Icon(icon, null) },
-        label = { Text(tab.name.lowercase().replaceFirstChar { it.uppercase() }) }
-    )
+    Column(
+        Modifier.widthIn(min = 70.dp).clickable { onSelect(tab) }.padding(horizontal = 10.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, null, tint = if (selected == tab) Color(0xFF63D7FF) else Color.Gray)
+        Text(tab.name.lowercase().replaceFirstChar { it.uppercase() }, color = if (selected == tab) Color(0xFF63D7FF) else Color.Gray, fontSize = 10.sp)
+    }
 }
 
 @Composable
@@ -153,9 +158,7 @@ private fun LiveScreen(channels: List<SportsChannel>, play: (String) -> Unit) {
             }
             if (visible.isEmpty()) Empty("No channels in this category")
             else LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-                items(visible, key = { "channel-${it.id}-${it.url}" }) { channel ->
-                    ChannelRow(channel, play)
-                }
+                items(visible, key = { "channel-${it.id}-${it.url}" }) { channel -> ChannelRow(channel, play) }
             }
         }
     }
