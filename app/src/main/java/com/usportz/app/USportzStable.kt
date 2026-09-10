@@ -1,8 +1,6 @@
 package com.usportz.app
 
-import android.content.Context
 import android.content.Intent
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -13,7 +11,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -37,12 +34,8 @@ internal fun USportzStableApp(store: SourceStore) {
 
     LaunchedEffect(refresh) {
         loading = true
-        // Do NOT call restoreCached() here. It performs large JSON disk parsing and
-        // must stay off the Android main thread. load() owns that work on Dispatchers.IO.
         channels = runCatching { SportsChannelBridge.load(context, refresh > 0) }.getOrDefault(emptyList())
         events = runCatching {
-            // Do not pass a 50K+ channel list into schedule prioritization. That path
-            // intentionally performs event/channel scoring and is too expensive for startup.
             SportsSchedule.load(context, refresh > 0, emptyList())
         }.getOrDefault(emptyList())
         loading = false
@@ -50,7 +43,9 @@ internal fun USportzStableApp(store: SourceStore) {
 
     fun play(url: String) {
         val clean = url.trim()
-        if (clean.isNotEmpty()) context.startActivity(Intent(context, RichPlayerActivity::class.java).putExtra(RichPlayerActivity.EXTRA_URL, clean))
+        if (clean.isNotEmpty()) {
+            context.startActivity(Intent(context, RichPlayerActivity::class.java).putExtra(RichPlayerActivity.EXTRA_URL, clean))
+        }
     }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFBFA6FF), secondary = Color(0xFF63D7FF), background = Color(0xFF080A10), surface = Color(0xFF10131D))) {
@@ -74,11 +69,11 @@ internal fun USportzStableApp(store: SourceStore) {
             Column(Modifier.fillMaxSize().padding(pad)) {
                 StableHeader(nav, loading) { refresh++ }
                 when (nav) {
-                    StableNav.HOME -> StableHome(events, channels, play)
+                    StableNav.HOME -> StableHome(events, channels, ::play)
                     StableNav.SPORTS -> StableSports(events)
-                    StableNav.LIVE -> StableLive(channels, favs, play)
-                    StableNav.FAV -> StableFavorites(channels, favs, play)
-                    StableNav.SEARCH -> StableSearch(channels, play)
+                    StableNav.LIVE -> StableLive(channels, favs, ::play)
+                    StableNav.FAV -> StableFavorites(channels, favs, ::play)
+                    StableNav.SEARCH -> StableSearch(channels, ::play)
                     StableNav.SOURCES -> StableSources(store) { refresh++ }
                 }
             }
