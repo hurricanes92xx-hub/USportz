@@ -57,24 +57,21 @@ object PairingManager {
         }.getOrDefault(emptyList())
     }
 
-    private fun savePairedTv(context: Context, endpoint: TvEndpoint) {
+    fun addPairedTv(context: Context, endpoint: TvEndpoint) {
         val devices = pairedTvs(context).toMutableList()
         val host = endpoint.host.hostAddress.orEmpty()
         val id = "${endpoint.name.lowercase().trim()}|$host|${endpoint.port}"
         val item = PairedTv(id, endpoint.name, host, endpoint.port)
         val index = devices.indexOfFirst { it.id == id }
         if (index >= 0) devices[index] = item else devices.add(item)
-        val array = JSONArray()
-        devices.forEach { d ->
-            array.put(JSONObject().apply {
-                put("id", d.id); put("name", d.name); put("host", d.host); put("port", d.port)
-            })
-        }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(DEVICES, array.toString()).putBoolean(PAIRED, true).apply()
+        writeDevices(context, devices)
     }
 
     fun removePairedTv(context: Context, id: String) {
-        val devices = pairedTvs(context).filterNot { it.id == id }
+        writeDevices(context, pairedTvs(context).filterNot { it.id == id })
+    }
+
+    private fun writeDevices(context: Context, devices: List<PairedTv>) {
         val array = JSONArray()
         devices.forEach { d ->
             array.put(JSONObject().apply {
@@ -126,9 +123,7 @@ object PairingManager {
                 val writer = OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8)
                 writer.write("POST /pair HTTP/1.1\r\nHost: ${endpoint.host.hostAddress}\r\nContent-Type: text/plain\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n")
                 writer.flush(); socket.getOutputStream().write(body); socket.getOutputStream().flush()
-                val ok = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)).readLine().orEmpty().contains(" 200 ")
-                if (ok) savePairedTv(endpoint = endpoint, context = store.contextForPairing())
-                ok
+                BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)).readLine().orEmpty().contains(" 200 ")
             }
         }.getOrDefault(false)
     }
@@ -217,5 +212,3 @@ object PairingManager {
 
     fun stopDiscover(context: Context, listener: NsdManager.DiscoveryListener) { runCatching { (context.getSystemService(Context.NSD_SERVICE) as NsdManager).stopServiceDiscovery(listener) } }
 }
-
-private fun SourceStore.contextForPairing(): Context = context
