@@ -13,6 +13,7 @@
   <activity android:name=".SportsHubActivity" android:screenOrientation="unspecified" android:exported="false"/>
   <activity android:name=".LeagueHubActivity" android:screenOrientation="unspecified" android:exported="false"/>
   <activity android:name=".RichSportsActivity" android:screenOrientation="unspecified" android:exported="false"/>
+  <activity android:name=".RichSportsV2Activity" android:screenOrientation="unspecified" android:exported="false"/>
   <activity android:name=".RichPlayerActivity" android:screenOrientation="landscape" android:exported="false"/>
   <activity android:name=".TvMainActivity" android:screenOrientation="landscape" android:exported="false"/>
   <activity android:name=".TvPairingActivity" android:screenOrientation="landscape" android:exported="true">
