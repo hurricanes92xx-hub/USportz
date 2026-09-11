@@ -28,6 +28,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.time.Instant
@@ -59,12 +61,20 @@ private fun TvSportsApp(activity: Activity) {
 
     suspend fun loadData(force: Boolean) {
         refreshing = true
-        val loadedChannels = withContext(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
-        val loadedEvents = withContext(Dispatchers.IO) { runCatching { SportsSchedule.load(force, loadedChannels) }.getOrDefault(emptyList()) }
-        channels = loadedChannels
-        events = loadedEvents
-        loading = false
-        refreshing = false
+        try {
+            val (loadedChannels, loadedEvents) = coroutineScope {
+                val channelsJob = async(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
+                val scheduleJob = async(Dispatchers.IO) { runCatching { SportsSchedule.load(force) }.getOrDefault(emptyList()) }
+                channelsJob.await() to scheduleJob.await()
+            }
+            channels = loadedChannels
+            events = if (loadedChannels.isEmpty()) loadedEvents else {
+                withContext(Dispatchers.Default) { SportsSchedule.load(false, loadedChannels) }.ifEmpty { loadedEvents }
+            }
+        } finally {
+            loading = false
+            refreshing = false
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -72,12 +82,20 @@ private fun TvSportsApp(activity: Activity) {
         while (true) {
             delay(60_000)
             nowMs = System.currentTimeMillis()
-            runCatching { loadData(false) }
+            runCatching { loadData(true) }
         }
     }
 
-    val live = remember(events, nowMs, selectedSport) { SportsSchedule.forSport(events, selectedSport).filter { isLiveEvent(it, nowMs) }.take(30) }
-    val upcoming = remember(events, nowMs, selectedSport) { SportsSchedule.forSport(events, selectedSport).filter { !isLiveEvent(it, nowMs) }.take(30) }
+    val live = remember(events, nowMs, selectedSport) {
+        SportsSchedule.forSport(events, selectedSport)
+            .filter { isLiveEvent(it, nowMs) }
+            .take(30)
+    }
+    val upcoming = remember(events, nowMs, selectedSport) {
+        SportsSchedule.forSport(events, selectedSport)
+            .filter { !isLiveEvent(it, nowMs) }
+            .take(30)
+    }
     val lastChannel = remember(channels) { LastChannelStore.load(activity) }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = NeonOrange, secondary = NeonOrangeSoft, background = TvBlack, surface = TvPanel)) {
@@ -123,7 +141,11 @@ private fun TvRoot(activity: Activity, loading: Boolean, refreshing: Boolean, ch
 @Composable private fun ActionCard(channel: SportsChannel, onClick: () -> Unit) { Card(modifier = Modifier.fillMaxWidth().height(100.dp), onClick = onClick, colors = CardDefaults.cardColors(containerColor = TvPanel), border = BorderStroke(1.dp, NeonOrange.copy(alpha = .45f))) { Row(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.History, null, tint = NeonOrange, modifier = Modifier.size(32.dp)); Spacer(Modifier.width(18.dp)); Column(Modifier.weight(1f)) { Text("LAST CHANNEL", color = NeonOrange, fontSize = 10.sp, fontWeight = FontWeight.Black); Text(channel.name, color = TvText, fontSize = 18.sp, fontWeight = FontWeight.Bold); Text("Press OK to resume", color = TvMuted, fontSize = 11.sp) }; Icon(Icons.Default.PlayArrow, null, tint = NeonOrange) } } }
 
 private fun playTvChannel(activity: Activity, channel: SportsChannel) { LastChannelStore.save(activity, channel); activity.startActivity(Intent(activity, RichPlayerActivity::class.java).putExtra(RichPlayerActivity.EXTRA_URL, channel.url)) }
-private fun isLiveEvent(event: SportsEvent, nowMs: Long): Boolean { val start = parseEventInstant(event.startTime) ?: return false; return nowMs in (start.toEpochMilli() - 15 * 60_000L)..(start.toEpochMilli() + 4 * 60 * 60_000L) }
+private fun isLiveEvent(event: SportsEvent, nowMs: Long): Boolean {
+    if (event.state == "in") return true
+    val start = parseEventInstant(event.startTime) ?: return false
+    return nowMs in (start.toEpochMilli() - 15 * 60_000L)..(start.toEpochMilli() + 6 * 60 * 60_000L)
+}
 private fun parseEventInstant(value: String): Instant? = runCatching { Instant.parse(value) }.getOrNull()
 private fun formatEventClock(value: String): String = runCatching { DateTimeFormatter.ISO_INSTANT.format(Instant.parse(value)) }.getOrDefault(value.take(16).replace('T', ' '))
 
