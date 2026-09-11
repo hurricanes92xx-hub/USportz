@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.focusable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
@@ -22,7 +23,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -148,9 +148,7 @@ private fun TvRoot(
             }
         }
         item { HeroCard(live.size, upcoming.size, channels.size, loading) }
-        if (lastChannel != null) item {
-            ActionCard(lastChannel) { playTvChannel(activity, lastChannel) }
-        }
+        if (lastChannel != null) item { ActionCard(lastChannel) { playTvChannel(activity, lastChannel) } }
         item { SectionTitle("SPORTS", "D-pad left/right") }
         item { SportRail(selectedSport, onSport) }
         item { SectionTitle("LIVE NOW", "${live.size} events") }
@@ -171,10 +169,7 @@ private fun StatusPill(text: String) {
 
 @Composable
 private fun HeroCard(live: Int, upcoming: Int, channels: Int, loading: Boolean) {
-    Box(
-        Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(28.dp))
-            .background(TvPanel2).then(Modifier)
-    ) {
+    Box(Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(28.dp)).background(TvPanel2)) {
         Column(Modifier.align(Alignment.CenterStart).padding(28.dp)) {
             Text("LIVE SPORTS", color = NeonOrange, fontSize = 15.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
             Text("Your sports. Your streams. Zero hunting.", color = TvText, fontSize = 31.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 7.dp))
@@ -196,16 +191,8 @@ private fun SectionTitle(title: String, detail: String) {
 private fun SportRail(selected: String, onSport: (String) -> Unit) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(8.dp)) {
         items(SportsCatalog.categories) { sport ->
-            Surface(
-                onClick = { onSport(sport) },
-                modifier = Modifier.widthIn(min = 145.dp).height(62.dp).focusable(),
-                shape = RoundedCornerShape(18.dp),
-                color = if (selected == sport) NeonOrange.copy(alpha = .20f) else TvPanel,
-                border = BorderStroke(if (selected == sport) 3.dp else 1.dp, if (selected == sport) NeonOrange else Color(0xFF2A2E32))
-            ) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(sport, color = if (selected == sport) NeonOrange else TvText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                }
+            Surface(onClick = { onSport(sport) }, modifier = Modifier.widthIn(min = 145.dp).height(62.dp).focusable(), shape = RoundedCornerShape(18.dp), color = if (selected == sport) NeonOrange.copy(alpha = .20f) else TvPanel, border = BorderStroke(if (selected == sport) 3.dp else 1.dp, if (selected == sport) NeonOrange else Color(0xFF2A2E32))) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(sport, color = if (selected == sport) NeonOrange else TvText, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
             }
         }
     }
@@ -216,21 +203,23 @@ private fun EventRail(activity: Activity, events: List<SportsEvent>, channels: L
     LazyRow(horizontalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(8.dp)) {
         items(events, key = { "event-${it.id}" }) { event ->
             val matches = remember(event.id, channels) { GameSourceMatcher.rankMatches(event, channels, 3) }
-            Card(
-                modifier = Modifier.width(330.dp).height(190.dp).focusable(),
-                shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(containerColor = TvPanel),
-                border = BorderStroke(1.dp, NeonOrange.copy(alpha = .35f))
-            ) {
+            val monsterJam = isMonsterJamEvent(event)
+            Card(modifier = Modifier.width(330.dp).height(210.dp).focusable(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = TvPanel), border = BorderStroke(1.dp, NeonOrange.copy(alpha = .35f))) {
                 Column(Modifier.padding(18.dp)) {
                     Text(if (isLiveEvent(event, nowMs)) "● LIVE" else formatEventClock(event.startTime), color = NeonOrange, fontSize = 11.sp, fontWeight = FontWeight.Black)
                     Text(SportsPresentation.matchup(event), color = TvText, fontSize = 19.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
                     Text(event.league, color = TvMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
                     Spacer(Modifier.weight(1f))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (matches.isEmpty()) "NO MATCH" else "${matches.size} STREAMS", color = NeonOrange, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.weight(1f))
-                        if (matches.isNotEmpty()) TextButton(onClick = { playTvChannel(activity, matches.first().channel) }) { Text("WATCH  ›", color = NeonOrange) }
+                    if (monsterJam) {
+                        Button(onClick = { openMonsterJamYouTube(activity) }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(7.dp)); Text(if (isLiveEvent(event, nowMs)) "WATCH LIVE ON YOUTUBE" else "WATCH ON YOUTUBE")
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (matches.isEmpty()) "NO MATCH" else "${matches.size} STREAMS", color = NeonOrange, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.weight(1f))
+                            if (matches.isNotEmpty()) TextButton(onClick = { playTvChannel(activity, matches.first().channel) }) { Text("WATCH  ›", color = NeonOrange) }
+                        }
                     }
                 }
             }
@@ -242,13 +231,7 @@ private fun EventRail(activity: Activity, events: List<SportsEvent>, channels: L
 private fun ChannelRail(activity: Activity, channels: List<SportsChannel>) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(8.dp)) {
         items(channels, key = { "channel-${it.id}" }) { channel ->
-            Card(
-                modifier = Modifier.width(245.dp).height(115.dp).focusable(),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = TvPanel),
-                border = BorderStroke(1.dp, NeonOrange.copy(alpha = .35f)),
-                onClick = { playTvChannel(activity, channel) }
-            ) {
+            Card(modifier = Modifier.width(245.dp).height(115.dp).focusable(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = TvPanel), border = BorderStroke(1.dp, NeonOrange.copy(alpha = .35f)), onClick = { playTvChannel(activity, channel) }) {
                 Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.Center) {
                     Text("LIVE TV", color = NeonOrange, fontSize = 10.sp, fontWeight = FontWeight.Black)
                     Text(channel.name, color = TvText, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
@@ -261,20 +244,11 @@ private fun ChannelRail(activity: Activity, channels: List<SportsChannel>) {
 
 @Composable
 private fun ActionCard(channel: SportsChannel, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().height(100.dp),
-        onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = TvPanel),
-        border = BorderStroke(1.dp, NeonOrange.copy(alpha = .45f))
-    ) {
+    Card(modifier = Modifier.fillMaxWidth().height(100.dp), onClick = onClick, colors = CardDefaults.cardColors(containerColor = TvPanel), border = BorderStroke(1.dp, NeonOrange.copy(alpha = .45f))) {
         Row(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.History, null, tint = NeonOrange, modifier = Modifier.size(32.dp))
             Spacer(Modifier.width(18.dp))
-            Column(Modifier.weight(1f)) {
-                Text("LAST CHANNEL", color = NeonOrange, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                Text(channel.name, color = TvText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Press OK to resume", color = TvMuted, fontSize = 11.sp)
-            }
+            Column(Modifier.weight(1f)) { Text("LAST CHANNEL", color = NeonOrange, fontSize = 10.sp, fontWeight = FontWeight.Black); Text(channel.name, color = TvText, fontSize = 18.sp, fontWeight = FontWeight.Bold); Text("Press OK to resume", color = TvMuted, fontSize = 11.sp) }
             Icon(Icons.Default.PlayArrow, null, tint = NeonOrange)
         }
     }
@@ -292,9 +266,7 @@ private fun isLiveEvent(event: SportsEvent, nowMs: Long): Boolean {
 
 private fun parseEventInstant(value: String): Instant? = runCatching { Instant.parse(value) }.getOrNull()
 
-private fun formatEventClock(value: String): String = runCatching {
-    DateTimeFormatter.ISO_INSTANT.format(Instant.parse(value))
-}.getOrDefault(value.take(16).replace('T', ' '))
+private fun formatEventClock(value: String): String = runCatching { DateTimeFormatter.ISO_INSTANT.format(Instant.parse(value)) }.getOrDefault(value.take(16).replace('T', ' '))
 
 private object LastChannelStore {
     private const val PREFS = "usportz_tv_state"
@@ -305,24 +277,12 @@ private object LastChannelStore {
     private const val KEY_URL = "last_url"
 
     fun save(activity: Activity, channel: SportsChannel) {
-        activity.getSharedPreferences(PREFS, 0).edit()
-            .putString(KEY_ID, channel.id)
-            .putString(KEY_NAME, channel.name)
-            .putString(KEY_GROUP, channel.group)
-            .putString(KEY_LOGO, channel.logo)
-            .putString(KEY_URL, channel.url)
-            .apply()
+        activity.getSharedPreferences(PREFS, 0).edit().putString(KEY_ID, channel.id).putString(KEY_NAME, channel.name).putString(KEY_GROUP, channel.group).putString(KEY_LOGO, channel.logo).putString(KEY_URL, channel.url).apply()
     }
 
     fun load(activity: Activity): SportsChannel? {
         val p = activity.getSharedPreferences(PREFS, 0)
         val url = p.getString(KEY_URL, null)?.takeIf { it.isNotBlank() } ?: return null
-        return SportsChannel(
-            p.getString(KEY_ID, "last") ?: "last",
-            p.getString(KEY_NAME, "Last Channel") ?: "Last Channel",
-            p.getString(KEY_GROUP, "Live TV") ?: "Live TV",
-            p.getString(KEY_LOGO, null),
-            url
-        )
+        return SportsChannel(p.getString(KEY_ID, "last") ?: "last", p.getString(KEY_NAME, "Last Channel") ?: "Last Channel", p.getString(KEY_GROUP, "Live TV") ?: "Live TV", p.getString(KEY_LOGO, null), url)
     }
 }
