@@ -19,9 +19,8 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "uspo
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 
     fun activeSnapshot(sourceKey: String): List<SportsChannel> {
-        val db = readableDatabase
         val out = ArrayList<SportsChannel>()
-        db.rawQuery("SELECT c.id,c.name,c.grp,c.logo,c.url FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation WHERE c.source_key=? AND c.is_sports=1 ORDER BY c.name COLLATE NOCASE", arrayOf(sourceKey)).use { cursor ->
+        readableDatabase.rawQuery("SELECT c.id,c.name,c.grp,c.logo,c.url FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation WHERE c.source_key=? AND c.is_sports=1 ORDER BY c.name COLLATE NOCASE", arrayOf(sourceKey)).use { cursor ->
             while (cursor.moveToNext()) {
                 out += SportsChannel(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3)?.ifBlank { null }, cursor.getString(4))
             }
@@ -31,21 +30,12 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "uspo
 
     fun activeCount(sourceKey: String): Int = readableDatabase.rawQuery("SELECT channel_count FROM meta WHERE source_key=?", arrayOf(sourceKey)).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
-    fun beginGeneration(sourceKey: String): Long {
-        val db = writableDatabase
-        val generation = System.currentTimeMillis()
-        db.beginTransaction()
-        try {
-            db.delete("channels", "source_key=? AND generation<?", arrayOf(sourceKey, generation - 1))
-            db.setTransactionSuccessful()
-        } finally { db.endTransaction() }
-        return generation
-    }
+    fun beginGeneration(sourceKey: String): Long = System.currentTimeMillis()
 
     fun insertBatch(sourceKey: String, generation: Long, batch: List<SportsChannel>) {
         if (batch.isEmpty()) return
         val db = writableDatabase
-        db.beginTransaction()
+        db.beginTransactionNonExclusive()
         try {
             batch.forEach { channel ->
                 val values = ContentValues().apply {
@@ -65,12 +55,18 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "uspo
     }
 
     fun activate(sourceKey: String, generation: Long, count: Int) {
-        writableDatabase.insertWithOnConflict("meta", null, ContentValues().apply {
-            put("source_key", sourceKey)
-            put("active_generation", generation)
-            put("saved_at", System.currentTimeMillis())
-            put("channel_count", count)
-        }, SQLiteDatabase.CONFLICT_REPLACE)
+        val db = writableDatabase
+        db.beginTransactionNonExclusive()
+        try {
+            db.insertWithOnConflict("meta", null, ContentValues().apply {
+                put("source_key", sourceKey)
+                put("active_generation", generation)
+                put("saved_at", System.currentTimeMillis())
+                put("channel_count", count)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.delete("channels", "source_key=? AND generation<>?", arrayOf(sourceKey, generation.toString()))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
     }
 
     fun clearSource(sourceKey: String) {
