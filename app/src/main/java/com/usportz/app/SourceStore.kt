@@ -39,22 +39,27 @@ class SourceStore(private val context: Context) {
     fun saveXtream(base: String, username: String, password: String, done: (Boolean, String) -> Unit, progress: (String) -> Unit = {}) {
         val cleanUser = username.trim()
         val cleanPass = password
-        val normalizedServer = SportsChannelBridge.normalizeXtreamServer(base)
+        val normalizedServer = runCatching { SportsChannelBridge.normalizeXtreamServer(base) }.getOrDefault("")
         if (normalizedServer.isBlank() || cleanUser.isBlank() || cleanPass.isBlank()) {
             main.post { done(false, "Enter a valid Xtream server, username and password") }
             return
         }
         io.launch {
             main.post { progress("Testing Xtream server…") }
-            val workingServer = SportsChannelBridge.authenticateXtream(normalizedServer, cleanUser, cleanPass)
+            val workingServer = runCatching { SportsChannelBridge.authenticateXtream(normalizedServer, cleanUser, cleanPass) }.getOrNull()
             if (workingServer.isNullOrBlank()) {
                 main.post { done(false, "Xtream login failed — server, username or password was rejected") }
                 return@launch
             }
-            server = workingServer
-            user = cleanUser
-            pass = cleanPass
-            playlist = ""
+            runCatching {
+                server = workingServer
+                user = cleanUser
+                pass = cleanPass
+                playlist = ""
+            }.onFailure {
+                main.post { done(false, "Could not save the encrypted source settings on this device") }
+                return@launch
+            }
             main.post { progress("Authenticated • loading live channels…") }
             val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
             val channels = result.getOrDefault(emptyList())
@@ -67,7 +72,17 @@ class SourceStore(private val context: Context) {
     }
 
     fun saveM3u(url: String, done: (Boolean, String) -> Unit) {
-        playlist = url.trim(); server = ""; user = ""; pass = ""
+        val cleanUrl = url.trim()
+        val valid = runCatching {
+            val parsed = java.net.URI(cleanUrl)
+            parsed.scheme.equals("http", true) || parsed.scheme.equals("https", true)
+        }.getOrDefault(false)
+        if (!valid) {
+            main.post { done(false, "Enter a valid http:// or https:// M3U/M3U8 playlist URL") }
+            return
+        }
+        playlist = cleanUrl
+        server = ""; user = ""; pass = ""
         io.launch {
             val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
             val channels = result.getOrDefault(emptyList())
@@ -77,9 +92,27 @@ class SourceStore(private val context: Context) {
 
     companion object {
         private const val PREFS_NAME = "usportz"
-        private fun securePrefs(context: Context) = runCatching {
-            val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
-            EncryptedSharedPreferences.create(context, PREFS_NAME, masterKey, EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV, EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
-        }.getOrElse { throw IllegalStateException("Secure credential storage unavailable", it) }
+
+        private fun securePrefs(context: Context): android.content.SharedPreferences {
+            fun create(): android.content.SharedPreferences {
+                val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+                return EncryptedSharedPreferences.create(
+                    context,
+                    PREFS_NAME,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            }
+            return runCatching { create() }.getOrElse {
+                // A stale/corrupt encrypted preference file must never crash the Sources screen.
+                // Remove only this app's encrypted store and recreate it; credentials are never
+                // downgraded to plaintext SharedPreferences.
+                context.deleteSharedPreferences(PREFS_NAME)
+                runCatching { create() }.getOrElse { failure ->
+                    throw IllegalStateException("Secure credential storage unavailable", failure)
+                }
+            }
+        }
     }
 }
