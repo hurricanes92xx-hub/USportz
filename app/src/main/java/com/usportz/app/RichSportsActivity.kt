@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.time.Instant
@@ -69,12 +71,22 @@ private fun RichSportsApp() {
         if (force) refreshing = true else loading = true
         error = ""
         try {
-            val loadedChannels = withContext(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
-            val loadedEvents = withContext(Dispatchers.IO) {
-                SportsSchedule.load(force, loadedChannels) + MonsterJamSchedule.load()
-            }.distinctBy { it.id }
+            // IPTV indexing and the sports schedule are independent. Never make a large
+            // Xtream playlist determine whether the live-games dashboard can appear.
+            val (loadedChannels, loadedEvents) = coroutineScope {
+                val channelsDeferred = async(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
+                val eventsDeferred = async(Dispatchers.IO) {
+                    (SportsSchedule.load(force) + MonsterJamSchedule.load()).distinctBy { it.id }
+                }
+                channelsDeferred.await() to eventsDeferred.await()
+            }
             channels = loadedChannels
-            events = loadedEvents
+            // Re-rank against the newly available local channel snapshot without forcing
+            // another network schedule fetch. The schedule itself already loaded in parallel.
+            events = if (loadedChannels.isEmpty()) loadedEvents else {
+                withContext(Dispatchers.Default) { SportsSchedule.load(false, loadedChannels) }
+                    .ifEmpty { loadedEvents }
+            }
         } catch (t: Throwable) {
             error = t.message?.takeIf { it.isNotBlank() } ?: "Unable to refresh sports data"
         } finally {
@@ -125,7 +137,7 @@ private fun HomeTab(events: List<SportsEvent>, channels: List<SportsChannel>, se
         item { Hero(channels.size, live.size, soon.size, today.size, error) }
         item { SportRail(selectedSport, onSport) }
         item { SectionTitle("LIVE NOW", "${live.size} events", LiveRed) }
-        if (live.isEmpty()) item { EmptyCard("Nothing live right now", "USPortz will refresh the schedule automatically.") }
+        if (live.isEmpty()) item { EmptyCard("No live games detected", "The live schedule is checked independently of your Xtream playlist and refreshes automatically.") }
         else items(live.take(20), key = { "live-${it.id}" }) { EventCard(it, true, channels, now, play, playEvent) }
         item { SectionTitle("STARTING SOON", "${soon.size} events", Cyan) }
         if (soon.isEmpty()) item { EmptyCard("No events starting soon", "Events within the next six hours appear here.") }
@@ -133,7 +145,7 @@ private fun HomeTab(events: List<SportsEvent>, channels: List<SportsChannel>, se
         item { SectionTitle("TODAY", "${today.size} events", Orange) }
         if (today.isEmpty()) item { EmptyCard("No more events today", "Try another sport or check TOMORROW for the next slate.") }
         else items(today.take(30), key = { "today-${it.id}" }) { EventCard(it, false, channels, now, play, playEvent) }
-        if (loading) item { Text("Loading sports and Xtream channels…", color = Color.Gray, modifier = Modifier.padding(18.dp)) }
+        if (loading) item { Text("Loading live schedule…", color = Color.Gray, modifier = Modifier.padding(18.dp)) }
     }
 }
 
@@ -151,7 +163,7 @@ private fun Hero(channels: Int, live: Int, soon: Int, today: Int, error: String)
         Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(9.dp).background(Orange, RoundedCornerShape(50))); Spacer(Modifier.width(8.dp)); Text("LIVE SPORTS", color = Orange, fontSize = 12.sp, fontWeight = FontWeight.Black) }
         Text("Everything worth watching.", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 5.dp))
         Text("$live live now  •  $soon starting soon  •  $today later today  •  $channels channels", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-        Text("Schedule refreshes automatically every 60 seconds.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 7.dp))
+        Text("Live schedule refreshes automatically every 60 seconds.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 7.dp))
         if (error.isNotBlank()) Text("Data warning: $error", color = Orange2, fontSize = 10.sp, modifier = Modifier.padding(top = 7.dp))
     } }
 }
@@ -274,7 +286,7 @@ private fun EmptyCard(title: String, subtitle: String) {
 }
 
 private fun emptyTitle(bucket: ScheduleBucket): String = when (bucket) {
-    ScheduleBucket.LIVE -> "Nothing live right now"
+    ScheduleBucket.LIVE -> "No live games detected"
     ScheduleBucket.STARTING_SOON -> "No events starting soon"
     ScheduleBucket.TODAY -> "No more events today"
     ScheduleBucket.TOMORROW -> "Nothing scheduled tomorrow"
@@ -283,7 +295,7 @@ private fun emptyTitle(bucket: ScheduleBucket): String = when (bucket) {
 }
 
 private fun emptySubtitle(bucket: ScheduleBucket): String = when (bucket) {
-    ScheduleBucket.LIVE -> "USportz will refresh the schedule automatically."
+    ScheduleBucket.LIVE -> "The live schedule is checked independently of your Xtream playlist and refreshes automatically."
     ScheduleBucket.STARTING_SOON -> "Events within the next six hours appear here."
     ScheduleBucket.TODAY -> "Try another sport or check TOMORROW for the next slate."
     ScheduleBucket.TOMORROW -> "The schedule will update as providers publish events."
@@ -295,13 +307,13 @@ private fun parseInstant(value: String): Instant? = runCatching { Instant.parse(
 
 private fun scheduleBucket(event: SportsEvent, nowMs: Long): ScheduleBucket {
     val start = parseInstant(event.startTime)?.toEpochMilli() ?: return ScheduleBucket.TODAY
-    val day = 86_400_000L
     val delta = start - nowMs
     val localZone = ZoneId.systemDefault()
     val today = Instant.ofEpochMilli(nowMs).atZone(localZone).toLocalDate()
     val eventDay = Instant.ofEpochMilli(start).atZone(localZone).toLocalDate()
     return when {
-        event.state == "in" || (delta <= 0 && delta > -4 * 60 * 60 * 1000L) -> ScheduleBucket.LIVE
+        event.state == "in" -> ScheduleBucket.LIVE
+        event.state != "post" && delta <= 0 && delta > -6 * 60 * 60 * 1000L -> ScheduleBucket.LIVE
         delta > 0 && delta <= 6 * 60 * 60 * 1000L -> ScheduleBucket.STARTING_SOON
         eventDay == today -> ScheduleBucket.TODAY
         eventDay == today.plusDays(1) -> ScheduleBucket.TOMORROW
