@@ -58,14 +58,24 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
         try {
             val (loadedChannels, loadedEvents) = coroutineScope {
                 val c = async(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
-                val e = async(Dispatchers.IO) { (SportsSchedule.load(force) + MonsterJamSchedule.load()).distinctBy { it.id } }; c.await() to e.await()
+                // Schedule refresh is intentionally independent from Xtream re-indexing. This lets the
+                // live board revalidate every cycle without hammering the user's IPTV source.
+                val e = async(Dispatchers.IO) { (SportsSchedule.load(true) + MonsterJamSchedule.load()).distinctBy { it.id } }; c.await() to e.await()
             }
             channels = loadedChannels
-            events = if (loadedChannels.isEmpty()) loadedEvents else withContext(Dispatchers.Default) { SportsSchedule.load(false, loadedChannels) }.ifEmpty { loadedEvents }
+            events = if (loadedChannels.isEmpty()) loadedEvents else withContext(Dispatchers.Default) { SportsSchedule.load(true, loadedChannels) }.ifEmpty { loadedEvents }
         } catch (t: Throwable) { error = t.message?.takeIf { it.isNotBlank() } ?: "Unable to refresh sports data" }
         finally { loading = false; refreshing = false }
     }
-    LaunchedEffect(Unit) { reload(false); while (true) { delay(1_000); now = System.currentTimeMillis() } }
+    LaunchedEffect(Unit) {
+        reload(false)
+        while (true) {
+            delay(30_000)
+            // Re-fetch the schedule every 30 seconds. force=false keeps Xtream credentials/channels cached,
+            // while reload() explicitly forces the sports schedule itself to revalidate live state.
+            reload(false)
+        }
+    }
     LaunchedEffect(refresh) { if (refresh > 0) reload(true) }
     val visibleEvents = remember(events, selectedSport, bucket, now) { SportsSchedule.forSport(events, selectedSport).filter { scheduleBucket(it, now) == bucket }.sortedBy { eventEpoch(it) ?: Long.MAX_VALUE } }
     MaterialTheme(colorScheme = darkColorScheme(primary = Orange, secondary = Cyan, background = Ink, surface = Panel)) {
@@ -91,7 +101,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 }
 
 @Composable private fun Header(refreshing:Boolean,onRefresh:()->Unit){ Row(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF201306),Color(0xFF17100D),Ink))).padding(18.dp),verticalAlignment=Alignment.CenterVertically){ Column(Modifier.weight(1f)){Text("USPORTZ",fontSize=31.sp,fontWeight=FontWeight.Black,color=Color.White);Text("SPORTS COMMAND CENTER",fontSize=11.sp,color=Orange2,fontWeight=FontWeight.Bold,letterSpacing=1.5.sp)};IconButton(onClick=onRefresh,enabled=!refreshing){Icon(if(refreshing)Icons.Default.Sync else Icons.Default.Refresh,"Refresh",tint=if(refreshing)Color.Gray else Orange)} } }
-@Composable private fun Hero(channels:Int,live:Int,soon:Int,today:Int,error:String){Card(Modifier.fillMaxWidth().padding(horizontal=12.dp),shape=RoundedCornerShape(24.dp),colors=CardDefaults.cardColors(containerColor=Panel2)){Column(Modifier.padding(20.dp)){Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(9.dp).background(Orange,RoundedCornerShape(50)));Spacer(Modifier.width(8.dp));Text("LIVE SPORTS",color=Orange,fontSize=12.sp,fontWeight=FontWeight.Black)};Text("Everything worth watching.",color=Color.White,fontSize=25.sp,fontWeight=FontWeight.Black,modifier=Modifier.padding(top=5.dp));Text("$live live now  •  $soon starting soon  •  $today later today  •  $channels channels",color=Color(0xFF9DA5B7),fontSize=13.sp,modifier=Modifier.padding(top=8.dp));Text("Live schedule refreshes automatically every 60 seconds.",color=Color.Gray,fontSize=11.sp,modifier=Modifier.padding(top=7.dp));if(error.isNotBlank())Text("Data warning: $error",color=Orange2,fontSize=10.sp,modifier=Modifier.padding(top=7.dp))}}}
+@Composable private fun Hero(channels:Int,live:Int,soon:Int,today:Int,error:String){Card(Modifier.fillMaxWidth().padding(horizontal=12.dp),shape=RoundedCornerShape(24.dp),colors=CardDefaults.cardColors(containerColor=Panel2)){Column(Modifier.padding(20.dp)){Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(9.dp).background(Orange,RoundedCornerShape(50)));Spacer(Modifier.width(8.dp));Text("LIVE SPORTS",color=Orange,fontSize=12.sp,fontWeight=FontWeight.Black)};Text("Everything worth watching.",color=Color.White,fontSize=25.sp,fontWeight=FontWeight.Black,modifier=Modifier.padding(top=5.dp));Text("$live live now  •  $soon starting soon  •  $today later today  •  $channels channels",color=Color(0xFF9DA5B7),fontSize=13.sp,modifier=Modifier.padding(top=8.dp));Text("Live schedule refreshes automatically every 30 seconds.",color=Color.Gray,fontSize=11.sp,modifier=Modifier.padding(top=7.dp));if(error.isNotBlank())Text("Data warning: $error",color=Orange2,fontSize=10.sp,modifier=Modifier.padding(top=7.dp))}}}
 
 @Composable private fun SportsTab(visible:List<SportsEvent>,allEvents:List<SportsEvent>,channels:List<SportsChannel>,selectedSport:String,bucket:ScheduleBucket,now:Long,onSport:(String)->Unit,onBucket:(ScheduleBucket)->Unit,onRefresh:()->Unit,play:(SportsChannel)->Unit,playEvent:(SportsEvent)->Unit,favorites:MutableMap<String,Boolean>){LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp,16.dp,16.dp,28.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){item{Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("SPORTS",color=Color.White,fontSize=28.sp,fontWeight=FontWeight.Black);Text("Accurate live and upcoming schedules",color=Color(0xFF9DA5B7),fontSize=13.sp)};IconButton(onClick=onRefresh){Icon(Icons.Default.Refresh,"Refresh",tint=Orange)}}};item{SportRail(selectedSport,onSport)};item{ScheduleRail(bucket,onBucket,SportsSchedule.forSport(allEvents,selectedSport),now)};item{SectionTitle(bucket.label,"${visible.size} events",if(bucket==ScheduleBucket.LIVE)LiveRed else Orange)};if(visible.isEmpty())item{EmptyCard(emptyTitle(bucket),emptySubtitle(bucket))}else items(visible.take(60),key={"schedule-${bucket.name}-${it.id}"}){EventCard(it,bucket==ScheduleBucket.LIVE,channels,now,play,playEvent,favorites)}}}
 
@@ -117,7 +127,6 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 @Composable private fun EmptyCard(title:String,subtitle:String){Card(Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(16.dp)){Column(Modifier.padding(18.dp)){Text(title,color=Color.White,fontWeight=FontWeight.Bold);Text(subtitle,color=Color.Gray,fontSize=12.sp,modifier=Modifier.padding(top=4.dp))}}}
 private fun emptyTitle(bucket:ScheduleBucket)=when(bucket){ScheduleBucket.LIVE->"No live games detected";ScheduleBucket.STARTING_SOON->"No events starting soon";ScheduleBucket.TODAY->"No more events today";ScheduleBucket.TOMORROW->"Nothing scheduled tomorrow";ScheduleBucket.NEXT_3_DAYS->"No events in the next three days";ScheduleBucket.COMPLETED->"No completed events"}
 private fun emptySubtitle(bucket:ScheduleBucket)=when(bucket){ScheduleBucket.LIVE->"The live schedule is checked independently of your Xtream playlist and refreshes automatically.";ScheduleBucket.STARTING_SOON->"Events within the next six hours appear here.";ScheduleBucket.TODAY->"Try another sport or check TOMORROW for the next slate.";ScheduleBucket.TOMORROW->"The schedule will update as providers publish events.";ScheduleBucket.NEXT_3_DAYS->"Try another sport or refresh the schedule.";ScheduleBucket.COMPLETED->"Finished events remain available here for reference."}
-
 private fun eventEpoch(value:String):Long?=runCatching{Instant.parse(value).toEpochMilli()}.getOrNull()?:runCatching{OffsetDateTime.parse(value).toInstant().toEpochMilli()}.getOrNull()?:value.toLongOrNull()?.let{if(it<10_000_000_000L)it*1000 else it}
 private fun parseInstant(value:String):Instant?=eventEpoch(value)?.let{Instant.ofEpochMilli(it)}
 private fun scheduleBucket(event:SportsEvent,nowMs:Long):ScheduleBucket{val start=eventEpoch(event.startTime)?:return if(event.state=="in")ScheduleBucket.LIVE else ScheduleBucket.TODAY;val delta=start-nowMs;val today=Instant.ofEpochMilli(nowMs).atZone(ZoneId.systemDefault()).toLocalDate();val eventDay=Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate();return when{event.state=="in"->ScheduleBucket.LIVE;event.state!="post"&&delta<=0&&delta>-6*60*60*1000L->ScheduleBucket.LIVE;delta>0&&delta<=6*60*60*1000L->ScheduleBucket.STARTING_SOON;eventDay==today->ScheduleBucket.TODAY;eventDay==today.plusDays(1)->ScheduleBucket.TOMORROW;eventDay.isAfter(today)&&eventDay<=today.plusDays(3)->ScheduleBucket.NEXT_3_DAYS;start<nowMs->ScheduleBucket.COMPLETED;else->ScheduleBucket.NEXT_3_DAYS}}
