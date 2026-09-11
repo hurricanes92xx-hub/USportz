@@ -1,5 +1,6 @@
 package com.usportz.app
 
+import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -63,7 +64,7 @@ private fun SourceSettingsScreen(context: ComponentActivity, store: SourceStore)
         item {
             StableSources(store) {
                 pairedCount = PairingManager.pairedTvs(context).size
-                context.setResult(RESULT_OK)
+                context.setResult(Activity.RESULT_OK)
             }
         }
     }
