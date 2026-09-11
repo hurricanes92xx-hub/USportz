@@ -1,7 +1,10 @@
 package com.usportz.app
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -27,6 +30,7 @@ object SportsChannelBridge {
     @Volatile private var cachedSourceKey = ""
     @Volatile private var channelIndex: ChannelIndex<SportsChannel>? = null
     private val indexing = AtomicBoolean(false)
+    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun restoreCached(context: Context): List<SportsChannel> {
         if (cached.isNotEmpty()) return cached
@@ -134,20 +138,57 @@ object SportsChannelBridge {
         } finally { conn.disconnect() }
     }.getOrDefault(false)
 
+    /**
+     * Returns the current snapshot immediately whenever one exists. If the snapshot is
+     * older than CACHE_TTL_MS, a provider refresh is started in the background. The caller
+     * never waits for a 20K-100K channel playlist to download, parse, index, or persist.
+     * A cold start with no cache still performs one foreground load so the UI has data.
+     */
     suspend fun load(context: Context, forceRefresh: Boolean = false): List<SportsChannel> = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
         if (cached.isEmpty()) restoreCached(context)
+
         val source = SourceStore(context)
         val server = normalizeXtreamServer(source.server)
         val user = source.user
         val pass = source.pass
         val playlist = source.playlist
         val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
+        val now = System.currentTimeMillis()
+        val hasUsableCache = cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt <= MAX_STALE_MS
+        val cacheAge = if (cachedAt > 0L) now - cachedAt else Long.MAX_VALUE
+        val needsRefresh = forceRefresh || cacheAge > CACHE_TTL_MS || cached.isEmpty() || cachedSourceKey != sourceKey
 
-        // Memory/disk cache is the normal path. A stale cache is safe to show while a later refresh updates it.
-        if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt <= MAX_STALE_MS) return@withContext cached
-        if (!indexing.compareAndSet(false, true)) return@withContext cached
+        if (hasUsableCache) {
+            if (needsRefresh) refreshScope.launch {
+                refreshInternal(context, server, user, pass, playlist, sourceKey)
+            }
+            return@withContext cached
+        }
+
+        if (cached.isNotEmpty() && cachedAt > 0L && now - cachedAt <= MAX_STALE_MS) {
+            refreshScope.launch {
+                refreshInternal(context, server, user, pass, playlist, sourceKey)
+            }
+            return@withContext cached
+        }
+
+        // Cold start: no safe snapshot exists, so fetch once before returning.
+        refreshInternal(context, server, user, pass, playlist, sourceKey)
+        cached
+    }
+
+    private suspend fun refreshInternal(
+        context: Context,
+        server: String,
+        user: String,
+        pass: String,
+        playlist: String,
+        sourceKey: String
+    ) = withContext(Dispatchers.IO) {
+        if (!indexing.compareAndSet(false, true)) return@withContext
         try {
+            // Another refresh may have completed while this coroutine was queued.
+            if (cachedSourceKey == sourceKey && cached.isNotEmpty() && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) return@withContext
             var result = emptyList<SportsChannel>()
             if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
                 for (base in normalizedServerCandidates(server)) {
@@ -164,13 +205,13 @@ object SportsChannelBridge {
                 result = runCatching { fetchAndParse(playlist) }.getOrDefault(emptyList())
             }
             if (result.isNotEmpty()) {
+                val savedAt = System.currentTimeMillis()
                 cached = result
-                cachedAt = System.currentTimeMillis()
+                cachedAt = savedAt
                 cachedSourceKey = sourceKey
                 channelIndex = ChannelIndex(result, SportsChannel::name, SportsChannel::group)
-                persist(context, result, sourceKey, cachedAt)
-                result
-            } else if (cached.isNotEmpty() && cachedAt > 0L && now - cachedAt <= MAX_STALE_MS) cached else emptyList()
+                persist(context, result, sourceKey, savedAt)
+            }
         } finally { indexing.set(false) }
     }
 
