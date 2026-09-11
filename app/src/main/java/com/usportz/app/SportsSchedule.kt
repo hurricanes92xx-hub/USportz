@@ -39,13 +39,21 @@ object SportsSchedule {
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedDay = ""
 
+    // Keep the core leagues fast, but cover the major domestic/international competitions
+    // that are active across the sports calendar rather than treating a quiet NBA/WNBA day
+    // as a quiet sports day.
     private val feeds = listOf(
         Feed("football", "nfl"), Feed("football", "college-football"), Feed("football", "cfl"), Feed("football", "ufl"),
-        Feed("basketball", "nba"), Feed("basketball", "wnba"), Feed("basketball", "mens-college-basketball"), Feed("basketball", "womens-college-basketball"),
-        Feed("baseball", "mlb"), Feed("baseball", "college-baseball"), Feed("hockey", "nhl"), Feed("hockey", "mens-college-hockey"), Feed("hockey", "womens-college-hockey"),
-        Feed("soccer", "usa.1"), Feed("soccer", "usa.nwsl"), Feed("soccer", "eng.1"), Feed("soccer", "eng.2"), Feed("soccer", "esp.1"), Feed("soccer", "ger.1"), Feed("soccer", "ita.1"), Feed("soccer", "fra.1"), Feed("soccer", "ned.1"), Feed("soccer", "por.1"), Feed("soccer", "sco.1"), Feed("soccer", "uefa.champions"), Feed("soccer", "uefa.europa"), Feed("soccer", "conmebol.libertadores"), Feed("soccer", "conmebol.sudamericana"), Feed("soccer", "fifa.world"),
-        Feed("mma", "ufc"), Feed("boxing", "boxing"), Feed("golf", "pga"), Feed("golf", "lpga"), Feed("tennis", "atp"), Feed("tennis", "wta"),
-        Feed("racing", "f1"), Feed("racing", "irl"), Feed("racing", "nascar-cup-series"), Feed("racing", "nascar-xfinity-series"), Feed("racing", "nascar-truck-series")
+        Feed("basketball", "nba"), Feed("basketball", "wnba"), Feed("basketball", "mens-college-basketball"), Feed("basketball", "womens-college-basketball"), Feed("basketball", "fiba"),
+        Feed("baseball", "mlb"), Feed("baseball", "college-baseball"),
+        Feed("hockey", "nhl"), Feed("hockey", "mens-college-hockey"), Feed("hockey", "womens-college-hockey"),
+        Feed("soccer", "usa.1"), Feed("soccer", "usa.nwsl"), Feed("soccer", "usa.usl.1"), Feed("soccer", "usa.usl.l1"), Feed("soccer", "usa.ncaa.m.1"), Feed("soccer", "usa.ncaa.w.1"),
+        Feed("soccer", "eng.1"), Feed("soccer", "eng.2"), Feed("soccer", "esp.1"), Feed("soccer", "ger.1"), Feed("soccer", "ita.1"), Feed("soccer", "fra.1"), Feed("soccer", "ned.1"), Feed("soccer", "por.1"), Feed("soccer", "sco.1"),
+        Feed("soccer", "mex.1"), Feed("soccer", "mex.2"), Feed("soccer", "can.w.nsl"), Feed("soccer", "uefa.champions"), Feed("soccer", "uefa.europa"), Feed("soccer", "conmebol.libertadores"), Feed("soccer", "conmebol.sudamericana"), Feed("soccer", "fifa.world"), Feed("soccer", "fifa.wwc"), Feed("soccer", "fifa.world.u20"),
+        Feed("mma", "ufc"), Feed("boxing", "boxing"),
+        Feed("golf", "pga"), Feed("golf", "lpga"), Feed("golf", "eur"), Feed("golf", "liv"), Feed("golf", "champions-tour"), Feed("golf", "ntw"),
+        Feed("tennis", "atp"), Feed("tennis", "wta"),
+        Feed("racing", "f1"), Feed("racing", "irl"), Feed("racing", "nascar-premier"), Feed("racing", "nascar-secondary"), Feed("racing", "nascar-truck")
     )
 
     suspend fun load(forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = loadInternal(forceRefresh, sourceChannels)
@@ -231,12 +239,12 @@ object SportsSchedule {
 
     /** Providers occasionally leave a game as scheduled after kickoff; correct that from the authoritative start timestamp. */
     private fun effectiveState(event: SportsEvent, now: Long): String {
-        if (event.state == "post") return "post"
         val start = startEpochMs(event.startTime) ?: return event.state
+        if (event.state == "post" && now > start + 6 * 60 * 60 * 1000L) return "post"
         return when {
             now < start -> "pre"
             now <= start + 6 * 60 * 60 * 1000L -> "in"
-            else -> event.state
+            else -> "post"
         }
     }
 
