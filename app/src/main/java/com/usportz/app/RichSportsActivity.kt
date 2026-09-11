@@ -70,18 +70,31 @@ private fun RichSportsApp() {
         try {
             val loadedChannels = withContext(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
             val loadedEvents = withContext(Dispatchers.IO) { SportsSchedule.load(force, loadedChannels) }
-            channels = loadedChannels; events = loadedEvents
-        } catch (t: Throwable) { error = t.message?.takeIf { it.isNotBlank() } ?: "Unable to refresh sports data" }
-        finally { loading = false; refreshing = false }
+            channels = loadedChannels
+            events = loadedEvents
+        } catch (t: Throwable) {
+            error = t.message?.takeIf { it.isNotBlank() } ?: "Unable to refresh sports data"
+        } finally {
+            loading = false
+            refreshing = false
+        }
     }
 
     LaunchedEffect(Unit) {
         reload(false)
-        while (true) { delay(1_000); now = System.currentTimeMillis(); if (now % 60_000L < 1_100L) reload(true) }
+        while (true) {
+            delay(1_000)
+            now = System.currentTimeMillis()
+            if (now % 60_000L < 1_100L) reload(true)
+        }
     }
     LaunchedEffect(refresh) { if (refresh > 0) reload(true) }
 
-    val visibleEvents = remember(events, selectedSport, bucket, now) { SportsSchedule.forSport(events, selectedSport).filter { scheduleBucket(it, now) == bucket }.sortedBy { parseInstant(it.startTime)?.toEpochMilli() ?: Long.MAX_VALUE } }
+    val visibleEvents = remember(events, selectedSport, bucket, now) {
+        SportsSchedule.forSport(events, selectedSport)
+            .filter { scheduleBucket(it, now) == bucket }
+            .sortedBy { parseInstant(it.startTime)?.toEpochMilli() ?: Long.MAX_VALUE }
+    }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Orange, secondary = Cyan, background = Ink, surface = Panel)) {
         Scaffold(containerColor = Ink, bottomBar = { BottomBar(tab) { tab = it } }) { pad ->
@@ -100,13 +113,23 @@ private fun RichSportsApp() {
 
 @Composable
 private fun HomeTab(events: List<SportsEvent>, channels: List<SportsChannel>, selectedSport: String, now: Long, loading: Boolean, refreshing: Boolean, error: String, onSport: (String) -> Unit, onRefresh: () -> Unit, play: (SportsChannel) -> Unit) {
-    val filtered = SportsSchedule.forSport(events, selectedSport); val live = filtered.filter { scheduleBucket(it, now) == ScheduleBucket.LIVE }; val soon = filtered.filter { scheduleBucket(it, now) == ScheduleBucket.STARTING_SOON }
+    val filtered = SportsSchedule.forSport(events, selectedSport)
+    val live = filtered.filter { scheduleBucket(it, now) == ScheduleBucket.LIVE }
+    val soon = filtered.filter { scheduleBucket(it, now) == ScheduleBucket.STARTING_SOON }
+    val today = filtered.filter { scheduleBucket(it, now) == ScheduleBucket.TODAY }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Header(refreshing, onRefresh) }; item { Hero(channels.size, live.size, soon.size, error) }; item { SportRail(selectedSport, onSport) }
+        item { Header(refreshing, onRefresh) }
+        item { Hero(channels.size, live.size, soon.size, today.size, error) }
+        item { SportRail(selectedSport, onSport) }
         item { SectionTitle("LIVE NOW", "${live.size} events", LiveRed) }
-        if (live.isEmpty()) item { EmptyCard("Nothing live right now", "USportz will refresh the schedule automatically.") } else items(live.take(10), key = { "live-${it.id}" }) { EventCard(it, true, channels, now, play) }
+        if (live.isEmpty()) item { EmptyCard("Nothing live right now", "USPortz will refresh the schedule automatically.") }
+        else items(live.take(20), key = { "live-${it.id}" }) { EventCard(it, true, channels, now, play) }
         item { SectionTitle("STARTING SOON", "${soon.size} events", Cyan) }
-        if (soon.isEmpty()) item { EmptyCard("No events starting soon", "Check TODAY or TOMORROW for the next slate.") } else items(soon.take(10), key = { "soon-${it.id}" }) { EventCard(it, false, channels, now, play) }
+        if (soon.isEmpty()) item { EmptyCard("No events starting soon", "Events within the next six hours appear here.") }
+        else items(soon.take(20), key = { "soon-${it.id}" }) { EventCard(it, false, channels, now, play) }
+        item { SectionTitle("TODAY", "${today.size} events", Orange) }
+        if (today.isEmpty()) item { EmptyCard("No more events today", "Try another sport or check TOMORROW for the next slate.") }
+        else items(today.take(30), key = { "today-${it.id}" }) { EventCard(it, false, channels, now, play) }
         if (loading) item { Text("Loading sports and Xtream channels…", color = Color.Gray, modifier = Modifier.padding(18.dp)) }
     }
 }
@@ -120,11 +143,11 @@ private fun Header(refreshing: Boolean, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun Hero(channels: Int, live: Int, soon: Int, error: String) {
+private fun Hero(channels: Int, live: Int, soon: Int, today: Int, error: String) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel2)) { Column(Modifier.padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(9.dp).background(Orange, RoundedCornerShape(50))); Spacer(Modifier.width(8.dp)); Text("LIVE SPORTS", color = Orange, fontSize = 12.sp, fontWeight = FontWeight.Black) }
         Text("Everything worth watching.", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 5.dp))
-        Text("$live live now  •  $soon starting soon  •  $channels channels", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+        Text("$live live now  •  $soon starting soon  •  $today later today  •  $channels channels", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
         Text("Schedule refreshes automatically every 60 seconds.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 7.dp))
         if (error.isNotBlank()) Text("Data warning: $error", color = Orange2, fontSize = 10.sp, modifier = Modifier.padding(top = 7.dp))
     } }
@@ -134,19 +157,43 @@ private fun Hero(channels: Int, live: Int, soon: Int, error: String) {
 private fun SportsTab(visible: List<SportsEvent>, allEvents: List<SportsEvent>, channels: List<SportsChannel>, selectedSport: String, bucket: ScheduleBucket, now: Long, onSport: (String) -> Unit, onBucket: (ScheduleBucket) -> Unit, onRefresh: () -> Unit, play: (SportsChannel) -> Unit, favorites: MutableMap<String, Boolean>) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("SPORTS", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("Accurate live and upcoming schedules", color = Color(0xFF9DA5B7), fontSize = 13.sp) }; IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh", tint = Orange) } } }
-        item { SportRail(selectedSport, onSport) }; item { ScheduleRail(bucket, onBucket, SportsSchedule.forSport(allEvents, selectedSport), now) }; item { SectionTitle(bucket.label, "${visible.size} events", if (bucket == ScheduleBucket.LIVE) LiveRed else Orange) }
-        if (visible.isEmpty()) item { EmptyCard(emptyTitle(bucket), emptySubtitle(bucket)) } else items(visible.take(60), key = { "schedule-${bucket.name}-${it.id}" }) { EventCard(it, bucket == ScheduleBucket.LIVE, channels, now, play, favorites) }
+        item { SportRail(selectedSport, onSport) }
+        item { ScheduleRail(bucket, onBucket, SportsSchedule.forSport(allEvents, selectedSport), now) }
+        item { SectionTitle(bucket.label, "${visible.size} events", if (bucket == ScheduleBucket.LIVE) LiveRed else Orange) }
+        if (visible.isEmpty()) item { EmptyCard(emptyTitle(bucket), emptySubtitle(bucket)) }
+        else items(visible.take(60), key = { "schedule-${bucket.name}-${it.id}" }) { EventCard(it, bucket == ScheduleBucket.LIVE, channels, now, play, favorites) }
     }
 }
 
 @Composable
 private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsChannel>, now: Long, play: (SportsChannel) -> Unit, favorites: MutableMap<String, Boolean>? = null) {
-    val ranked = remember(event.id, channels) { GameSourceMatcher.rankMatches(event, channels, limit = 3) }; val brand = SportsBranding.find(event.name, event.league); val leagueLogo = event.leagueLogo?.takeIf { it.isNotBlank() } ?: BrandAssets.logoUrl(brand); val start = parseInstant(event.startTime)?.toEpochMilli(); val countdown = if (start != null && start > now) formatCountdown(start - now) else ""; val isFavorite = favorites?.get(event.id) == true
+    val ranked = remember(event.id, channels) { GameSourceMatcher.rankMatches(event, channels, limit = 3) }
+    val brand = SportsBranding.find(event.name, event.league)
+    val leagueLogo = event.leagueLogo?.takeIf { it.isNotBlank() } ?: BrandAssets.logoUrl(brand)
+    val start = parseInstant(event.startTime)?.toEpochMilli()
+    val countdown = if (start != null && start > now) formatCountdown(start - now) else ""
+    val isFavorite = favorites?.get(event.id) == true
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) { Column(Modifier.padding(15.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { if (live) { Box(Modifier.size(9.dp).background(LiveRed, RoundedCornerShape(50))); Spacer(Modifier.width(7.dp)); Text("LIVE NOW", color = LiveRed, fontSize = 10.sp, fontWeight = FontWeight.Black) } else Text("UPCOMING", color = Orange, fontSize = 10.sp, fontWeight = FontWeight.Black); Spacer(Modifier.width(9.dp)); Text(brand?.label ?: event.league, color = Color.Gray, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis); Spacer(Modifier.weight(1f)); if (!live && countdown.isNotBlank()) Text("IN $countdown", color = Orange, fontSize = 10.sp, fontWeight = FontWeight.Black) }
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) { if (!leagueLogo.isNullOrBlank()) AsyncImage(leagueLogo, brand?.label ?: event.league, Modifier.size(44.dp), contentScale = ContentScale.Fit); Column(Modifier.weight(1f).padding(start = 10.dp)) { Text(SportsPresentation.matchup(event), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(event.detail.ifBlank { formatClock(event.startTime) }, color = Color(0xFF9DA5B7), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }; if (favorites != null) IconButton(onClick = { favorites[event.id] = !isFavorite }) { Icon(if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite", tint = if (isFavorite) Orange else Color.Gray) } }
-        if (event.competitorLogos.any { it.isNotBlank() }) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) { event.competitorLogos.take(2).forEachIndexed { i, logo -> if (logo.isNotBlank()) AsyncImage(logo, event.competitors.getOrNull(i).orEmpty(), Modifier.size(32.dp), contentScale = ContentScale.Fit) }; Text(event.competitors.take(2).joinToString("  •  "), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-        if (ranked.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { ranked.forEachIndexed { index, match -> OutlinedButton(onClick = { play(match.channel) }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) { Text(if (index == 0) "STREAM 1 • BEST MATCH" else "STREAM ${index + 1}", color = if (index == 0) Orange else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black); Text(match.channel.name, color = Color(0xFFB8BECC), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }; Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } } }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (live) { Box(Modifier.size(9.dp).background(LiveRed, RoundedCornerShape(50))); Spacer(Modifier.width(7.dp)); Text("LIVE NOW", color = LiveRed, fontSize = 10.sp, fontWeight = FontWeight.Black) }
+            else Text("UPCOMING", color = Orange, fontSize = 10.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.width(9.dp)); Text(brand?.label ?: event.league, color = Color.Gray, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis); Spacer(Modifier.weight(1f))
+            if (!live && countdown.isNotBlank()) Text("IN $countdown", color = Orange, fontSize = 10.sp, fontWeight = FontWeight.Black)
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!leagueLogo.isNullOrBlank()) AsyncImage(leagueLogo, brand?.label ?: event.league, Modifier.size(44.dp), contentScale = ContentScale.Fit)
+            Column(Modifier.weight(1f).padding(start = 10.dp)) { Text(SportsPresentation.matchup(event), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(event.detail.ifBlank { formatClock(event.startTime) }, color = Color(0xFF9DA5B7), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+            if (favorites != null) IconButton(onClick = { favorites[event.id] = !isFavorite }) { Icon(if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite", tint = if (isFavorite) Orange else Color.Gray) }
+        }
+        if (event.competitorLogos.any { it.isNotBlank() }) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            event.competitorLogos.take(2).forEachIndexed { i, logo -> if (logo.isNotBlank()) AsyncImage(logo, event.competitors.getOrNull(i).orEmpty(), Modifier.size(32.dp), contentScale = ContentScale.Fit) }
+            Text(event.competitors.take(2).joinToString("  •  "), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        if (ranked.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            ranked.forEachIndexed { index, match -> OutlinedButton(onClick = { play(match.channel) }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
+                Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) { Text(if (index == 0) "STREAM 1 • BEST MATCH" else "STREAM ${index + 1}", color = if (index == 0) Orange else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black); Text(match.channel.name, color = Color(0xFFB8BECC), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }; Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+            } }
+        }
     } }
 }
 
@@ -164,22 +211,24 @@ private fun SportsNewsTab(channels: List<SportsChannel>, loading: Boolean, play:
         if (!loading && sportsChannels.isEmpty()) item { EmptyCard("No sports networks found", "Add a source containing ESPN, TSN, Sportsnet, ACC Network or another supported sports network.") }
         items(networks, key = { "network-${it.key}" }) { network ->
             val matches = grouped[network.key].orEmpty()
-            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(network.logoUrl, network.label, Modifier.size(48.dp), contentScale = ContentScale.Fit)
-                        Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(network.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold); Text("${matches.size} channel${if (matches.size == 1) "" else "s"}", color = Color.Gray, fontSize = 11.sp) }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    matches.take(8).forEach { (channel, _) -> OutlinedButton(onClick = { play(channel) }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(channel.name, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis); Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } }
-                }
-            }
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) { Column(Modifier.padding(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) { AsyncImage(network.logoUrl, network.label, Modifier.size(48.dp), contentScale = ContentScale.Fit); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(network.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold); Text("${matches.size} channel${if (matches.size == 1) "" else "s"}", color = Color.Gray, fontSize = 11.sp) } }
+                Spacer(Modifier.height(8.dp))
+                matches.take(8).forEach { (channel, _) -> OutlinedButton(onClick = { play(channel) }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(channel.name, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis); Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } }
+            } }
         }
     }
 }
 
 @Composable
-private fun FavoritesTab(events: List<SportsEvent>, channels: List<SportsChannel>, favorites: MutableMap<String, Boolean>, play: (SportsChannel) -> Unit) { val saved = events.filter { favorites[it.id] == true }; LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { item { Text("FAVORITES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black) }; if (saved.isEmpty()) item { EmptyCard("Nothing saved yet", "Star an event to keep it here.") } else items(saved, key = { "fav-${it.id}" }) { EventCard(it, it.state == "in", channels, System.currentTimeMillis(), play, favorites) } } }
+private fun FavoritesTab(events: List<SportsEvent>, channels: List<SportsChannel>, favorites: MutableMap<String, Boolean>, play: (SportsChannel) -> Unit) {
+    val saved = events.filter { favorites[it.id] == true }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { Text("FAVORITES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black) }
+        if (saved.isEmpty()) item { EmptyCard("Nothing saved yet", "Star an event to keep it here.") }
+        else items(saved, key = { "fav-${it.id}" }) { EventCard(it, it.state == "in", channels, System.currentTimeMillis(), play, favorites) }
+    }
+}
 
 @Composable
 private fun SourcesTab(open: () -> Unit) { Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text("SOURCES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("Xtream Codes + M3U/M3U8", color = Color.Gray); Card(Modifier.fillMaxWidth().clickable { open() }, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.SettingsInputAntenna, null, tint = Orange); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text("Manage source", color = Color.White, fontWeight = FontWeight.Bold); Text("Connect, test and index your playlist", color = Color.Gray, fontSize = 12.sp) }; Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } } } }
@@ -189,16 +238,51 @@ private fun BottomBar(selected: Int, onSelect: (Int) -> Unit) { NavigationBar(co
 
 @Composable
 private fun SportRail(selected: String, onSport: (String) -> Unit) { LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(SportsCatalog.categories, key = { it }) { sport -> FilterChip(selected = selected == sport, onClick = { onSport(sport) }, label = { Text(sport) }) } } }
+
 @Composable
 private fun ScheduleRail(selected: ScheduleBucket, onSelected: (ScheduleBucket) -> Unit, events: List<SportsEvent>, now: Long) { LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) { items(ScheduleBucket.values().toList(), key = { it.name }) { b -> FilterChip(selected = selected == b, onClick = { onSelected(b) }, label = { Text("${b.label} ${events.count { scheduleBucket(it, now) == b }}") }) } } }
+
 @Composable
 private fun SectionTitle(title: String, count: String, accent: Color) { Row(Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) { Text("●", color = accent, fontSize = 10.sp); Spacer(Modifier.width(7.dp)); Text(title, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold); Spacer(Modifier.weight(1f)); Text(count, color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Bold) } }
+
 @Composable
 private fun EmptyCard(title: String, subtitle: String) { Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel2), shape = RoundedCornerShape(18.dp)) { Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.SportsScore, null, tint = Orange, modifier = Modifier.size(38.dp)); Text(title, color = Color.White, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(top = 8.dp)); Text(subtitle, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) } } }
 
-private fun scheduleBucket(event: SportsEvent, nowMs: Long): ScheduleBucket { val state = event.state.lowercase(Locale.US); if (state in setOf("in", "live", "playing")) return ScheduleBucket.LIVE; if (state in setOf("post", "completed", "final", "finished")) return ScheduleBucket.COMPLETED; val start = parseInstant(event.startTime)?.toEpochMilli() ?: return ScheduleBucket.TODAY; val today = Instant.ofEpochMilli(nowMs).atZone(ZoneId.systemDefault()).toLocalDate(); val startDate = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate(); val delta = java.time.temporal.ChronoUnit.DAYS.between(today, startDate); return when { start < nowMs -> ScheduleBucket.LIVE; start - nowMs <= 2L * 60L * 60L * 1000L -> ScheduleBucket.STARTING_SOON; delta == 0L -> ScheduleBucket.TODAY; delta == 1L -> ScheduleBucket.TOMORROW; else -> ScheduleBucket.NEXT_3_DAYS } }
-private fun emptyTitle(bucket: ScheduleBucket): String = when (bucket) { ScheduleBucket.LIVE -> "Nothing live right now"; ScheduleBucket.STARTING_SOON -> "No events starting soon"; ScheduleBucket.TODAY -> "No more events today"; ScheduleBucket.TOMORROW -> "Tomorrow is clear"; ScheduleBucket.NEXT_3_DAYS -> "No events in the next 3 days"; ScheduleBucket.COMPLETED -> "No completed events" }
-private fun emptySubtitle(bucket: ScheduleBucket): String = when (bucket) { ScheduleBucket.LIVE -> "The schedule automatically checks again every minute."; ScheduleBucket.STARTING_SOON -> "Starting soon means within two hours."; ScheduleBucket.TODAY -> "Try another sport or check TOMORROW."; ScheduleBucket.NEXT_3_DAYS -> "The schedule feed may not have farther-out events yet."; ScheduleBucket.COMPLETED -> "Completed events remain here for reference."; ScheduleBucket.TOMORROW -> "Try TODAY or NEXT 3 DAYS." }
+private fun scheduleBucket(event: SportsEvent, nowMs: Long): ScheduleBucket {
+    val state = event.state.lowercase(Locale.US)
+    if (state in setOf("in", "live", "playing")) return ScheduleBucket.LIVE
+    if (state in setOf("post", "completed", "final", "finished")) return ScheduleBucket.COMPLETED
+    val start = parseInstant(event.startTime)?.toEpochMilli() ?: return ScheduleBucket.TODAY
+    val today = Instant.ofEpochMilli(nowMs).atZone(ZoneId.systemDefault()).toLocalDate()
+    val startDate = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate()
+    val delta = java.time.temporal.ChronoUnit.DAYS.between(today, startDate)
+    return when {
+        start < nowMs -> ScheduleBucket.LIVE
+        start - nowMs <= 6L * 60L * 60L * 1000L -> ScheduleBucket.STARTING_SOON
+        delta == 0L -> ScheduleBucket.TODAY
+        delta == 1L -> ScheduleBucket.TOMORROW
+        else -> ScheduleBucket.NEXT_3_DAYS
+    }
+}
+
+private fun emptyTitle(bucket: ScheduleBucket): String = when (bucket) {
+    ScheduleBucket.LIVE -> "Nothing live right now"
+    ScheduleBucket.STARTING_SOON -> "No events starting soon"
+    ScheduleBucket.TODAY -> "No more events today"
+    ScheduleBucket.TOMORROW -> "Tomorrow is clear"
+    ScheduleBucket.NEXT_3_DAYS -> "No events in the next 3 days"
+    ScheduleBucket.COMPLETED -> "No completed events"
+}
+
+private fun emptySubtitle(bucket: ScheduleBucket): String = when (bucket) {
+    ScheduleBucket.LIVE -> "The schedule automatically checks again every minute."
+    ScheduleBucket.STARTING_SOON -> "Starting soon means within six hours."
+    ScheduleBucket.TODAY -> "Try another sport or check TOMORROW."
+    ScheduleBucket.NEXT_3_DAYS -> "The schedule feed may not have farther-out events yet."
+    ScheduleBucket.COMPLETED -> "Completed events remain here for reference."
+    ScheduleBucket.TOMORROW -> "Try TODAY or NEXT 3 DAYS."
+}
+
 private fun formatCountdown(ms: Long): String { val total = (ms / 1000L).coerceAtLeast(0L); val h = total / 3600L; val m = (total % 3600L) / 60L; return if (h > 0) String.format(Locale.US, "%dh %02dm", h, m) else String.format(Locale.US, "%dm", m) }
 private fun parseInstant(value: String): Instant? = runCatching { Instant.parse(value) }.getOrElse { runCatching { java.time.OffsetDateTime.parse(value).toInstant() }.getOrNull() }
 private fun formatClock(value: String): String = parseInstant(value)?.let { DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()).withZone(ZoneId.systemDefault()).format(it) } ?: value
