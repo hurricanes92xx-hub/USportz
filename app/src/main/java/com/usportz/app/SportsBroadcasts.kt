@@ -16,51 +16,18 @@ object SportsBroadcasts {
     )
 
     private val bySport = linkedMapOf(
-        "Football" to listOf(
-            "NFL Network", "CBS", "FOX", "NBC", "ESPN", "ESPN2", "ABC", "Prime Video", "Peacock",
-            "NFL+", "USA Network", "CW", "SEC Network", "ACC Network", "Big Ten Network", "BTN",
-            "FS1", "FS2", "CBS Sports Network", "CBSSN", "ESPN+", "TNT"
-        ),
-        "Basketball" to listOf(
-            "ABC", "ESPN", "ESPN2", "ESPNU", "ESPN+", "CBS", "CBS Sports Network", "CBSSN",
-            "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV",
-            "USA Network", "CW", "NBA TV", "ACC Network", "SEC Network", "Big Ten Network", "BTN",
-            "B1G+", "Longhorn Network", "ION", "Paramount+", "Max"
-        ),
-        "Baseball" to listOf(
-            "FOX", "FS1", "ESPN", "ESPN2", "ABC", "TBS", "MLB Network", "MLB.TV", "Apple TV+",
-            "Apple TV", "Peacock", "NBC", "CBS", "FOX Deportes", "ESPN+", "Roku"
-        ),
-        "Hockey" to listOf(
-            "ESPN", "ESPN2", "ABC", "ESPN+", "TNT", "TBS", "truTV", "NHL Network", "NBC",
-            "Peacock", "CBS Sports Network", "CBSSN", "Big Ten Network", "BTN"
-        ),
-        "Soccer" to listOf(
-            "Apple TV", "Apple TV+", "MLS Season Pass", "FOX", "FS1", "FS2", "ESPN", "ESPN2",
-            "ESPN+", "ABC", "CBS", "CBS Sports Network", "Paramount+", "NBC", "USA Network",
-            "Peacock", "Telemundo", "Universo", "Univision", "TUDN", "TNT", "TBS", "truTV"
-        ),
-        "MMA" to listOf(
-            "Paramount+", "CBS", "ESPN", "ESPN+", "UFC Fight Pass", "USA Network", "ABC", "TNT"
-        ),
-        "Boxing" to listOf(
-            "ESPN", "ESPN+", "ABC", "FOX", "FS1", "FS2", "CBS", "Paramount+", "DAZN", "TNT",
-            "TBS", "truTV", "Prime Video"
-        ),
-        "Wrestling" to listOf(
-            "USA Network", "USA", "CW", "Peacock", "ESPN", "Netflix", "FOX", "FS1", "ABC", "CBS"
-        ),
-        "Motorsports" to listOf(
-            "FOX", "FS1", "FS2", "NBC", "USA Network", "Peacock", "TNT", "Prime Video", "ABC",
-            "ESPN", "ESPN2", "ESPN+", "CW", "Apple TV+", "Apple TV"
-        ),
-        "Tennis" to listOf(
-            "ESPN", "ESPN2", "ABC", "ESPN+", "Tennis Channel", "NBC", "Peacock", "CBS", "TNT", "TBS"
-        ),
-        "Golf" to listOf(
-            "CBS", "NBC", "Golf Channel", "USA Network", "USA", "Peacock", "ESPN", "ESPN+", "FOX",
-            "FS1", "CW", "CBS Sports Network", "CBSSN"
-        )
+        "Football" to listOf("NFL Network", "CBS", "FOX", "NBC", "ESPN", "ESPN2", "ABC", "Prime Video", "Peacock", "NFL+", "USA Network", "CW", "SEC Network", "ACC Network", "Big Ten Network", "BTN", "FS1", "FS2", "CBS Sports Network", "CBSSN", "ESPN+", "TNT"),
+        "Basketball" to listOf("ABC", "ESPN", "ESPN2", "ESPNU", "ESPN+", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "USA Network", "CW", "NBA TV", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "ION", "Paramount+", "Max"),
+        "NCAA Basketball" to listOf("ESPN", "ESPN2", "ESPNU", "ESPN+", "ABC", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "CW", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "Paramount+", "Max"),
+        "Baseball" to listOf("FOX", "FS1", "ESPN", "ESPN2", "ABC", "TBS", "MLB Network", "MLB.TV", "Apple TV+", "Apple TV", "Peacock", "NBC", "CBS", "FOX Deportes", "ESPN+", "Roku"),
+        "Hockey" to listOf("ESPN", "ESPN2", "ABC", "ESPN+", "TNT", "TBS", "truTV", "NHL Network", "NBC", "Peacock", "CBS Sports Network", "CBSSN", "Big Ten Network", "BTN"),
+        "Soccer" to listOf("Apple TV", "Apple TV+", "MLS Season Pass", "FOX", "FS1", "FS2", "ESPN", "ESPN2", "ESPN+", "ABC", "CBS", "CBS Sports Network", "Paramount+", "NBC", "USA Network", "Peacock", "Telemundo", "Universo", "Univision", "TUDN", "TNT", "TBS", "truTV"),
+        "MMA" to listOf("Paramount+", "CBS", "ESPN", "ESPN+", "UFC Fight Pass", "USA Network", "ABC", "TNT"),
+        "Boxing" to listOf("ESPN", "ESPN+", "ABC", "FOX", "FS1", "FS2", "CBS", "Paramount+", "DAZN", "TNT", "TBS", "truTV", "Prime Video"),
+        "Wrestling" to listOf("USA Network", "USA", "CW", "Peacock", "ESPN", "Netflix", "FOX", "FS1", "ABC", "CBS"),
+        "Motorsports" to listOf("FOX", "FS1", "FS2", "NBC", "USA Network", "Peacock", "TNT", "Prime Video", "ABC", "ESPN", "ESPN2", "ESPN+", "CW", "Apple TV+", "Apple TV"),
+        "Tennis" to listOf("ESPN", "ESPN2", "ABC", "ESPN+", "Tennis Channel", "NBC", "Peacock", "CBS", "TNT", "TBS"),
+        "Golf" to listOf("CBS", "NBC", "Golf Channel", "USA Network", "USA", "Peacock", "ESPN", "ESPN+", "FOX", "FS1", "CW", "CBS Sports Network", "CBSSN")
     )
 
     private val conferenceNetworks = linkedMapOf(
@@ -100,7 +67,6 @@ object SportsBroadcasts {
             .map(::normalize)
             .filter { it.isNotBlank() }
         if (exactBroadcasts.any { haystack.contains(it) }) return 100
-
         val preferred = preferredNetworks(event)
         val matched = preferred.indexOfFirst { alias ->
             val n = normalize(alias)
