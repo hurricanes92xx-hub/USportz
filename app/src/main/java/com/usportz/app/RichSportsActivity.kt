@@ -93,7 +93,7 @@ private fun RichSportsApp() {
             bottomBar = { RichBottomBar(tab) { tab = it } }
         ) { pad ->
             when (tab) {
-                0 -> HomeTab(loading, channels.size, liveEvents, upcoming, selectedSport, onSport = { selectedSport = it }, onWatch = activity::playChannel, onSources = activity::openSourceApp, onRefresh = { activity.window.decorView.post { /* refresh through recomposition below */ } })
+                0 -> HomeTab(loading, channels.size, liveEvents, upcoming, selectedSport, channels, onSport = { selectedSport = it }, onWatch = activity::playChannel, onSources = activity::openSourceApp, onRefresh = { activity.window.decorView.post { /* refresh through recomposition below */ } })
                 1 -> SportsTab(selectedSport, { selectedSport = it }, sportEvents, channels, activity::playChannel)
                 2 -> LiveTvTab(categories, selectedCategory, { selectedCategory = it }, channels, activity::playChannel, loading)
                 3 -> FavoritesTab(events, channels, activity::playChannel)
@@ -104,16 +104,16 @@ private fun RichSportsApp() {
 }
 
 @Composable
-private fun HomeTab(loading: Boolean, channelCount: Int, live: List<SportsEvent>, upcoming: List<SportsEvent>, selectedSport: String, onSport: (String) -> Unit, onWatch: (SportsChannel) -> Unit, onSources: () -> Unit, onRefresh: () -> Unit) {
+private fun HomeTab(loading: Boolean, channelCount: Int, live: List<SportsEvent>, upcoming: List<SportsEvent>, selectedSport: String, channels: List<SportsChannel>, onSport: (String) -> Unit, onWatch: (SportsChannel) -> Unit, onSources: () -> Unit, onRefresh: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(bottom = 8.dp), contentPadding = PaddingValues(bottom = 22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Header(onSources) }
         item { Hero(channelCount, live.size, upcoming.size) }
         item { SportRail(selectedSport, onSport) }
         item { SectionTitle("LIVE NOW", "${live.size} events", Pink) }
         if (live.isEmpty()) item { EmptyCard("No live events detected", "Refresh the sports schedule or choose another sport.") }
-        else items(live.take(8), key = { "home-live-${it.id}" }) { EventCard(it, true, null, onWatch) }
+        else items(live.take(8), key = { "home-live-${it.id}" }) { EventCard(it, true, channels, onWatch) }
         item { SectionTitle("COMING UP", "${upcoming.size} events", Cyan) }
-        items(upcoming.take(12), key = { "home-up-${it.id}" }) { EventCard(it, false, null, onWatch) }
+        items(upcoming.take(12), key = { "home-up-${it.id}" }) { EventCard(it, false, channels, onWatch) }
         if (loading) item { Text("Loading sports and Xtream channels…", color = Color.Gray, modifier = Modifier.padding(18.dp)) }
     }
 }
@@ -244,7 +244,9 @@ private fun SectionTitle(title: String, count: String, accent: Color) {
 
 @Composable
 private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsChannel>?, play: (SportsChannel) -> Unit) {
-    val channel = channels?.let { SportsChannelBridge.bestMatch(event, it) }
+    val rankedMatches = remember(event.id, channels) {
+        channels?.let { GameSourceMatcher.rankMatches(event, it, limit = 3) }.orEmpty()
+    }
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -254,7 +256,26 @@ private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsCh
             }
             Text(SportsPresentation.matchup(event), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
             Text(event.detail.ifBlank { formatClock(event.startTime) }, color = Color(0xFF9DA5B7), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
-            if (channel != null) Button(onClick = { play(channel) }, modifier = Modifier.padding(top = 10.dp)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(5.dp)); Text("WATCH LIVE") }
+            if (rankedMatches.isNotEmpty()) {
+                Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    rankedMatches.forEachIndexed { index, match ->
+                        val label = "STREAM ${index + 1}"
+                        OutlinedButton(
+                            onClick = { play(match.channel) },
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, null)
+                            Spacer(Modifier.width(6.dp))
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                                Text(label, color = if (index == 0) Cyan else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                                Text(match.channel.name, color = Color(0xFFB8BECC), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (index == 0) Text("BEST", color = Cyan, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                        }
+                    }
+                }
+            }
         }
     }
 }
