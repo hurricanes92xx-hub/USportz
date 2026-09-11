@@ -18,10 +18,10 @@ import java.time.format.DateTimeFormatter
 /**
  * Targeted combat-sports schedule fallback.
  *
- * UFC/DWCS are deliberately date-driven instead of relying on the free season endpoint,
- * which is limited to 15 season events. That limitation can hide the current UFC card.
- * We also preserve TheSportsDB's local event date when its timestamp has no timezone so a
- * UFC Saturday card cannot be shifted into the previous day by the phone's timezone.
+ * UFC/DWCS are date-driven instead of relying on the free season endpoint,
+ * which can hide the current UFC card. WWE/AEW/TNA/ROH also use the next-event
+ * endpoint plus the season feed so a single upcoming event cannot suppress the
+ * rest of the available wrestling schedule.
  */
 object DedicatedSchedule {
     private const val API = "https://www.thesportsdb.com/api/v1/json/123"
@@ -31,10 +31,10 @@ object DedicatedSchedule {
     private val seasons = listOf(
         Season(4443, "mma", "UFC", nextLeagueId = 4443),
         Season(4444, "wrestling", "WWE", nextLeagueId = 4444),
-        Season(4563, "wrestling", "AEW"),
-        Season(4455, "wrestling", "TNA"),
-        Season(4448, "wrestling", "ROH"),
-        Season(4445, "boxing", "Boxing")
+        Season(4563, "wrestling", "AEW", nextLeagueId = 4563),
+        Season(4455, "wrestling", "TNA", nextLeagueId = 4455),
+        Season(4448, "wrestling", "ROH", nextLeagueId = 4448),
+        Season(4445, "boxing", "Boxing", nextLeagueId = 4445)
     )
 
     suspend fun load(): List<SportsEvent> = withContext(Dispatchers.IO) {
@@ -46,6 +46,7 @@ object DedicatedSchedule {
                     when {
                         season.league.equals("UFC", true) -> loadUfcWindow(season, today, last)
                         season.league.equals("WWE", true) -> loadWweWindow(season, today, last)
+                        season.league.equals("AEW", true) || season.league.equals("TNA", true) || season.league.equals("ROH", true) -> loadWrestlingWindow(season, today, last)
                         else -> loadOtherSeason(season, today, last)
                     }
                 }
@@ -75,15 +76,18 @@ object DedicatedSchedule {
     private suspend fun loadWweWindow(season: Season, today: LocalDate, last: LocalDate): List<SportsEvent> = coroutineScope {
         val primary = async(Dispatchers.IO) { fetchNextLeague(season, season.nextLeagueId ?: season.id, today, last) }
         val day = async(Dispatchers.IO) { fetchDay(season, today, today, last) }
-        val first = (primary.await() + day.await()).distinctBy { canonical(it) }
-        if (first.any { isSameLocalDay(it.startTime, today) } || first.isNotEmpty()) first
-        else fetchSeason(season, today, last)
+        val seasonFeed = async(Dispatchers.IO) { fetchSeason(season, today, last) }
+        (primary.await() + day.await() + seasonFeed.await()).distinctBy { canonical(it) }
     }
 
-    private fun loadOtherSeason(season: Season, today: LocalDate, last: LocalDate): List<SportsEvent> {
-        val seasonEvents = fetchSeason(season, today, last)
-        return if (seasonEvents.isNotEmpty()) seasonEvents else emptyList()
+    private suspend fun loadWrestlingWindow(season: Season, today: LocalDate, last: LocalDate): List<SportsEvent> = coroutineScope {
+        val primary = async(Dispatchers.IO) { fetchNextLeague(season, season.nextLeagueId ?: season.id, today, last) }
+        val todayFeed = async(Dispatchers.IO) { fetchDay(season, today, today, last) }
+        val seasonFeed = async(Dispatchers.IO) { fetchSeason(season, today, last) }
+        (primary.await() + todayFeed.await() + seasonFeed.await()).distinctBy { canonical(it) }
     }
+
+    private fun loadOtherSeason(season: Season, today: LocalDate, last: LocalDate): List<SportsEvent> = fetchSeason(season, today, last)
 
     private fun fetchSeason(season: Season, today: LocalDate, last: LocalDate): List<SportsEvent> = runCatching {
         val body = get("$API/eventsseason.php?id=${season.id}&s=${today.year}")
@@ -129,7 +133,23 @@ object DedicatedSchedule {
                     .ifBlank { clean(e.optString("strPoster")) }
                     .ifBlank { clean(e.optString("strBanner")) }
                 val resolvedBrand = SportsBranding.find(title, season.league)
-                val fallbackLogo = BrandAssets.logoUrl(resolvedBrand)
+                val eventLogo = BrandAssets.eventLogoUrl(
+                    SportsEvent(
+                        id = "preview",
+                        sport = season.sport,
+                        league = season.league,
+                        name = title,
+                        shortName = title,
+                        state = state,
+                        startTime = timestamp,
+                        competitors = emptyList(),
+                        competitorLogos = emptyList(),
+                        leagueLogo = null,
+                        detail = ""
+                    ),
+                    resolvedBrand
+                )
+                val fallbackLogo = eventLogo ?: BrandAssets.logoUrl(resolvedBrand)
 
                 add(SportsEvent(
                     id = "tsdb:${eventId.ifBlank { "${season.league}:$localDay:$i" }}",
@@ -141,8 +161,9 @@ object DedicatedSchedule {
                     startTime = timestamp,
                     competitors = listOf(away, home).filter(String::isNotBlank),
                     competitorLogos = listOf(clean(e.optString("strAwayTeamBadge")), clean(e.optString("strHomeTeamBadge"))),
-                    // Prefer the event artwork for fight-night/PPV cards; otherwise use the
-                    // league/DWCS badge. This gives combat events a real logo instead of a blank tile.
+                    // Prefer actual event artwork. If it is absent, use the event-specific
+                    // wrestling logo and finally the league logo. This protects WWE/AEW/TNA
+                    // cards from blank artwork when a provider record is sparse.
                     leagueLogo = eventArtwork.ifBlank { leagueBadge }.ifBlank { fallbackLogo },
                     detail = listOf(clean(e.optString("strVenue")), clean(e.optString("strCity")))
                         .filter(String::isNotBlank).joinToString(", "),
@@ -174,7 +195,7 @@ object DedicatedSchedule {
             connection.readTimeout = 8000
             connection.requestMethod = "GET"
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "USPortz/1.6")
+            connection.setRequestProperty("User-Agent", "USPortz/1.7")
             if (connection.responseCode !in 200..299) return ""
             connection.inputStream.bufferedReader().use { it.readText() }
         } finally { connection.disconnect() }
@@ -182,8 +203,8 @@ object DedicatedSchedule {
 
     private fun parseTimestamp(raw: String?, date: String?, time: String?): String {
         val value = clean(raw)
-        // TheSportsDB sometimes sends an ISO timestamp without an offset. Do not assume UTC
-        // in that case: pair the local event date/time so the event remains on the correct day.
+        // TheSportsDB sometimes sends an ISO timestamp without an offset. Pair the local
+        // event date/time in the device timezone so a wrestling/fight card cannot move days.
         if (value.contains("T") && (value.endsWith("Z") || value.matches(Regex(".*[+-]\\d{2}:?\\d{2}$")))) {
             runCatching { return Instant.parse(value).toString() }
         }
