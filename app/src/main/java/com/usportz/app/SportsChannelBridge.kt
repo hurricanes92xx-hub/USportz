@@ -47,17 +47,51 @@ object SportsChannelBridge {
 
     fun authenticateXtream(server: String, user: String, pass: String): String? {
         val query = credentialsQuery(user, pass)
-        for (base in normalizedServerCandidates(server)) for (endpoint in listOf("player_api.php", "panel_api.php")) {
-            val body = runCatching { request("$base/$endpoint?$query", 7_000) }.getOrNull().orEmpty()
-            val json = runCatching { JSONObject(body) }.getOrNull()
-            if (json != null) {
-                val info = json.optJSONObject("user_info")
-                val auth = clean(info?.optString("auth") ?: json.optString("auth"))
-                val status = clean(info?.optString("status") ?: json.optString("status"))
-                if (auth == "1" || status.equals("Active", true) || status.equals("Enabled", true)) return base
+        for (base in normalizedServerCandidates(server)) {
+            for (endpoint in listOf("player_api.php", "panel_api.php")) {
+                val body = runCatching { request("$base/$endpoint?$query", 7_000) }.getOrNull().orEmpty()
+                if (isAuthenticatedResponse(body)) return base
             }
+            // A number of real-world Xtream panels expose a working M3U endpoint while
+            // their player_api response is non-standard or disabled. Probe only the
+            // beginning of the playlist so login never downloads the whole catalog twice.
+            if (probeM3u("$base/get.php?$query&type=m3u_plus&output=ts")) return base
         }
         return null
+    }
+
+    private fun isAuthenticatedResponse(body: String): Boolean {
+        if (body.isBlank()) return false
+        val json = runCatching { JSONObject(body) }.getOrNull() ?: return false
+        val info = json.optJSONObject("user_info")
+        val authValue = if (info != null && info.has("auth")) info.opt("auth") else json.opt("auth")
+        val status = clean(info?.optString("status") ?: json.optString("status"))
+        return authValue == 1 || authValue == true || authValue.toString().equals("1", true) ||
+            status.equals("Active", true) || status.equals("Enabled", true) || status.equals("Trial", true)
+    }
+
+    private fun probeM3u(url: String): Boolean {
+        val conn = runCatching { URL(url).openConnection() as HttpURLConnection }.getOrNull() ?: return false
+        return try {
+            conn.connectTimeout = 4_500
+            conn.readTimeout = 7_000
+            conn.instanceFollowRedirects = true
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
+            conn.setRequestProperty("Accept-Encoding", "gzip")
+            conn.setRequestProperty("User-Agent", "USPortz/1.9")
+            if (conn.responseCode !in 200..299) return false
+            val text = openDecoded(conn).bufferedReader().use { reader ->
+                val buffer = CharArray(32 * 1024)
+                val read = reader.read(buffer)
+                if (read > 0) String(buffer, 0, read) else ""
+            }
+            text.contains("#EXTM3U", true) || text.contains("#EXTINF", true)
+        } catch (_: Exception) {
+            false
+        } finally {
+            conn.disconnect()
+        }
     }
 
     fun validateXtream(server: String, user: String, pass: String): Boolean = authenticateXtream(server, user, pass) != null
