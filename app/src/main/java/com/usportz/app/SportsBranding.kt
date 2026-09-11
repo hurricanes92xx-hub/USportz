@@ -34,6 +34,7 @@ object SportsBranding {
         SportsBrand("libertadores", "Copa Libertadores", listOf("copa libertadores", "libertadores", "conmebol.libertadores"), "LIB", "SOCCER"),
         SportsBrand("sudamericana", "Copa Sudamericana", listOf("copa sudamericana", "sudamericana", "conmebol.sudamericana"), "SUD", "SOCCER"),
         SportsBrand("fifa", "FIFA", listOf("fifa", "fifa.world"), "FIFA", "SOCCER"),
+        SportsBrand("dwcs", "Dana White's Contender Series", listOf("dana white's contender series", "dana whites contender series", "contender series", "dwtcs"), "DWCS", "FIGHT"),
         SportsBrand("ufc", "UFC", listOf("ufc", "ultimate fighting championship"), "UFC", "FIGHT"),
         SportsBrand("boxing", "Boxing", listOf("boxing", "wbc", "wba", "wbo", "ibf"), "BOX", "FIGHT"),
         SportsBrand("wwe", "WWE", listOf("wwe", "raw", "smackdown", "nxt", "evolve"), "WWE", "WRESTLING"),
