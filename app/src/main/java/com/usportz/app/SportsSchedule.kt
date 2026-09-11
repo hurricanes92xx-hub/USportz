@@ -13,7 +13,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/** Multi-provider schedule engine with official fallbacks, safe parsing and stale-data protection. */
+/** Multi-provider schedule engine with cross-source de-duplication and logo preference. */
 data class SportsEvent(
     val id: String,
     val sport: String,
@@ -73,7 +73,7 @@ object SportsSchedule {
             val day = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate()
             !day.isBefore(today) && !day.isAfter(today.plusDays(LOOKAHEAD_DAYS))
         }
-        val fresh = (incoming + retained).distinctBy { canonicalId(it) }
+        val fresh = dedupeBest(incoming + retained)
             .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { startEpochMs(it.startTime) ?: Long.MAX_VALUE })
             .take(2500)
         if (fresh.isNotEmpty()) { cached = fresh; cachedAt = now; cachedDay = todayKey }
@@ -81,13 +81,33 @@ object SportsSchedule {
         prioritizeSourceMatches(cached, source)
     }
 
-    fun isCacheFresh(): Boolean = cached.isNotEmpty() && cachedDay == LocalDate.now().toString() && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS
-    fun lastUpdatedEpochMs(): Long = cachedAt
-    fun liveEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state == "in" }
-    fun upcomingEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state != "post" && (it.state == "in" || startEpochMs(it.startTime)?.let { t -> t > System.currentTimeMillis() } == true) }
-    fun isToday(event: SportsEvent): Boolean = localDate(event.startTime) == LocalDate.now()
+    /** Removes cross-provider duplicates. Same matchup + same minute is one event. */
+    private fun dedupeBest(events: List<SportsEvent>): List<SportsEvent> = events
+        .groupBy { canonicalId(it) }
+        .values
+        .mapNotNull { group -> group.maxWithOrNull(compareBy<SportsEvent> { qualityScore(it) }.thenBy { it.state == "in" }) }
 
-    fun forSport(events: List<SportsEvent>, sport: String): List<SportsEvent> = if (sport.isBlank() || sport == "All") events else events.filter { SportsCatalog.classify(it.name, it.league) == sport || it.sport.equals(sport, true) }
+    private fun qualityScore(event: SportsEvent): Int {
+        var score = 0
+        score += event.competitorLogos.count { it.isNotBlank() } * 100
+        if (!event.leagueLogo.isNullOrBlank()) score += 50
+        if (event.broadcast.isNotBlank()) score += 15
+        if (event.detail.isNotBlank()) score += 5
+        if (event.competitors.size >= 2) score += 3
+        return score
+    }
+
+    private fun canonicalId(event: SportsEvent): String {
+        val teams = event.competitors.map(::normalizeTeam).filter { it.isNotBlank() }.sorted().joinToString("|")
+        val minute = startEpochMs(event.startTime)?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDateTime().withSecond(0).withNano(0).toString() } ?: event.startTime.take(16)
+        return "${normalize(event.sport)}|${normalize(event.league)}|$teams|$minute"
+    }
+
+    private fun normalizeTeam(value: String): String = normalize(value)
+        .replace(" state ", " st ")
+        .replace(" state$", " st")
+        .replace(" university ", " ")
+        .replace(" university$", "")
 
     private fun fetchFeed(feed: Feed): List<SportsEvent> {
         val today = LocalDate.now(); val dates = "${today.format(DateTimeFormatter.BASIC_ISO_DATE)}-${today.plusDays(LOOKAHEAD_DAYS).format(DateTimeFormatter.BASIC_ISO_DATE)}"
@@ -99,7 +119,7 @@ object SportsSchedule {
 
     private fun fetchJson(url: String, feed: Feed): List<SportsEvent> = runCatching {
         val c = URL(url).openConnection() as HttpURLConnection
-        try { c.connectTimeout = HTTP_CONNECT_MS; c.readTimeout = HTTP_READ_MS; c.requestMethod = "GET"; c.setRequestProperty("Accept", "application/json"); c.setRequestProperty("User-Agent", "USportz/1.4"); if (c.responseCode !in 200..299) return emptyList(); parseEspn(c.inputStream.bufferedReader().use { it.readText() }, feed) }
+        try { c.connectTimeout = HTTP_CONNECT_MS; c.readTimeout = HTTP_READ_MS; c.requestMethod = "GET"; c.setRequestProperty("Accept", "application/json"); c.setRequestProperty("User-Agent", "USPortz/1.4"); if (c.responseCode !in 200..299) return emptyList(); parseEspn(c.inputStream.bufferedReader().use { it.readText() }, feed) }
         finally { c.disconnect() }
     }.getOrDefault(emptyList())
 
@@ -128,19 +148,17 @@ object SportsSchedule {
             val start = startEpochMs(event.startTime) ?: return@mapNotNull null
             val day = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate()
             if (day.isBefore(today) || day.isAfter(last)) return@mapNotNull null
-            event.copy(
-                name = safe(event.name), shortName = safe(event.shortName),
-                competitors = event.competitors.map(::safe).filter(String::isNotBlank),
-                competitorLogos = event.competitorLogos.map(::safe),
-                leagueLogo = safe(event.leagueLogo).ifBlank { null },
-                detail = safe(event.detail), broadcast = safe(event.broadcast), state = event.state
-            )
+            event.copy(name = safe(event.name), shortName = safe(event.shortName), competitors = event.competitors.map(::safe).filter(String::isNotBlank), competitorLogos = event.competitorLogos.map(::safe), leagueLogo = safe(event.leagueLogo).ifBlank { null }, detail = safe(event.detail), broadcast = safe(event.broadcast), state = event.state)
         }
     }
 
-    private fun startEpochMs(value: String): Long? = runCatching { Instant.parse(value).toEpochMilli() }.getOrElse { runCatching { java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrElse { value.toLongOrNull()?.let { if (it < 100000000000L) it * 1000L else it } } }
-    private fun localDate(value: String): LocalDate? = startEpochMs(value)?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }
-    private fun canonicalId(event: SportsEvent): String = "${normalize(event.league)}|${event.competitors.map(::normalize).sorted().joinToString("|")}|${event.startTime.take(16)}".ifBlank { event.id }
+    fun isCacheFresh(): Boolean = cached.isNotEmpty() && cachedDay == LocalDate.now().toString() && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS
+    fun lastUpdatedEpochMs(): Long = cachedAt
+    fun liveEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state == "in" }
+    fun upcomingEvents(events: List<SportsEvent>): List<SportsEvent> = events.filter { it.state != "post" && (it.state == "in" || startEpochMs(it.startTime)?.let { t -> t > System.currentTimeMillis() } == true) }
+    fun isToday(event: SportsEvent): Boolean = localDate(event.startTime) == LocalDate.now()
+
+    fun forSport(events: List<SportsEvent>, sport: String): List<SportsEvent> = if (sport.isBlank() || sport == "All") events else events.filter { SportsCatalog.classify(it.name, it.league) == sport || it.sport.equals(sport, true) }
 
     private fun prioritizeSourceMatches(events: List<SportsEvent>, channels: List<SportsChannel>): List<SportsEvent> { if (events.isEmpty() || channels.isEmpty()) return events; return events.asSequence().map { it to sourceMatchScore(it, channels) }.sortedWith(compareByDescending<Pair<SportsEvent, Int>> { it.second > 0 }.thenByDescending { it.second }.thenByDescending { it.first.state == "in" }.thenBy { startEpochMs(it.first.startTime) ?: Long.MAX_VALUE }).map { it.first }.toList() }
     fun sourceMatchScore(event: SportsEvent, channels: List<SportsChannel>): Int = channels.asSequence().map { matchChannel(event, it.name, it.group) }.maxOrNull() ?: 0
@@ -153,6 +171,8 @@ object SportsSchedule {
         aliases[eventLeague].orEmpty().forEach { alias -> if (haystack.contains(normalize(alias))) score += 2 }; if (event.broadcast.isNotBlank() && haystack.contains(normalize(event.broadcast))) score += 4; return score
     }
 
+    private fun startEpochMs(value: String): Long? = runCatching { Instant.parse(value).toEpochMilli() }.getOrElse { runCatching { java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrElse { value.toLongOrNull()?.let { if (it < 100000000000L) it * 1000L else it } } }
+    private fun localDate(value: String): LocalDate? = startEpochMs(value)?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }
     private fun safe(value: String?): String = value.orEmpty().trim().takeIf { it.isNotBlank() && !it.equals("null", true) && !it.equals("undefined", true) }.orEmpty()
     private fun normalize(value: String): String = value.lowercase().replace("&", " and ").replace(Regex("[^a-z0-9]+"), " ").trim()
 }
