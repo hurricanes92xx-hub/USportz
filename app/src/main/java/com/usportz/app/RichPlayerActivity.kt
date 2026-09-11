@@ -122,15 +122,17 @@ class RichPlayerActivity : ComponentActivity() {
         }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AndroidView(
-                factory = { PlayerView(it).apply {
-                    player = player
-                    useController = true
-                    controllerShowTimeoutMs = 3_000
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-                    keepScreenOn = true
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                } },
-                update = { it.player = player },
+                factory = { viewContext ->
+                    PlayerView(viewContext).apply {
+                        setPlayer(player)
+                        useController = true
+                        controllerShowTimeoutMs = 3_000
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+                        keepScreenOn = true
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                },
+                update = { it.setPlayer(player) },
                 modifier = Modifier.fillMaxSize()
             )
             IconButton(onClick = { finish() }, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) {
