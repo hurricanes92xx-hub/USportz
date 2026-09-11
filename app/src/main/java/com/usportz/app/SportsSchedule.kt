@@ -56,22 +56,25 @@ object SportsSchedule {
     suspend fun load(@Suppress("UNUSED_PARAMETER") context: android.content.Context, forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = loadInternal(forceRefresh, sourceChannels)
 
     private suspend fun loadInternal(forceRefresh: Boolean, sourceChannels: List<SportsChannel>): List<SportsEvent> = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis(); val today = LocalDate.now(); val todayKey = today.toString()
+        val now = System.currentTimeMillis(); val today = LocalDate.now(); val todayKey = today.toString(); val last = today.plusDays(LOOKAHEAD_DAYS)
         val source = if (sourceChannels.isNotEmpty()) sourceChannels else SportsChannelBridge.cachedChannels()
-        if (!forceRefresh && cached.isNotEmpty() && cachedDay == todayKey && now - cachedAt < CACHE_TTL_MS) return@withContext prioritizeSourceMatches(cached, source)
+        val monsterJam = MonsterJamSchedule.load(today, last)
+        if (!forceRefresh && cached.isNotEmpty() && cachedDay == todayKey && now - cachedAt < CACHE_TTL_MS) {
+            return@withContext prioritizeSourceMatches(dedupeBest(cached + monsterJam), source)
+        }
 
         val (espn, dedicated, official) = coroutineScope {
             val espnJob = async { feeds.map { f -> async { fetchFeed(f) } }.awaitAll().flatten() }
             val dedicatedJob = async { DedicatedSchedule.load() }
-            val officialJob = async { OfficialScheduleProviders.load(today, today.plusDays(LOOKAHEAD_DAYS)) }
+            val officialJob = async { OfficialScheduleProviders.load(today, last) }
             Triple(espnJob.await(), dedicatedJob.await(), officialJob.await())
         }
 
-        val incoming = sanitizeWindow(espn + dedicated + official, now)
+        val incoming = sanitizeWindow(espn + dedicated + official + monsterJam, now)
         val retained = cached.filter { event ->
             val start = startEpochMs(event.startTime) ?: return@filter false
             val day = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate()
-            !day.isBefore(today) && !day.isAfter(today.plusDays(LOOKAHEAD_DAYS))
+            !day.isBefore(today) && !day.isAfter(last)
         }
         val fresh = dedupeBest(incoming + retained)
             .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { startEpochMs(it.startTime) ?: Long.MAX_VALUE })
@@ -100,7 +103,7 @@ object SportsSchedule {
     private fun canonicalId(event: SportsEvent): String {
         val teams = event.competitors.map(::normalizeTeam).filter { it.isNotBlank() }.sorted().joinToString("|")
         val minute = startEpochMs(event.startTime)?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDateTime().withSecond(0).withNano(0).toString() } ?: event.startTime.take(16)
-        return "${normalize(event.sport)}|${normalize(event.league)}|$teams|$minute"
+        return "${normalize(event.sport)}|${normalize(event.league)}|$teams|$minute|${normalize(event.name)}"
     }
 
     private fun normalizeTeam(value: String): String = normalize(value)
@@ -167,7 +170,7 @@ object SportsSchedule {
         val haystack = normalize("$channelName $group"); val eventLeague = normalize(event.league); val eventSport = normalize(event.sport); var score = 0
         if (eventLeague.isNotBlank() && haystack.contains(eventLeague)) score += 5; if (eventSport.isNotBlank() && haystack.contains(eventSport)) score += 2
         event.competitors.forEach { team -> val n = normalize(team); if (n.length >= 4 && haystack.contains(n)) score += 5; team.split(Regex("[^A-Za-z0-9]+" )).filter { it.length >= 4 }.forEach { token -> if (haystack.contains(token.lowercase())) score += 2 } }
-        val aliases = mapOf("nfl" to listOf("nfl", "football"), "nba" to listOf("nba", "basketball"), "wnba" to listOf("wnba", "basketball"), "mlb" to listOf("mlb", "baseball"), "nhl" to listOf("nhl", "hockey"), "ufc" to listOf("ufc", "mma"), "premier league" to listOf("epl", "premier league"), "mls" to listOf("mls", "soccer"), "ncaa football" to listOf("ncaa", "college football", "football"), "ncaa basketball" to listOf("ncaa", "college basketball", "basketball"), "nascar" to listOf("nascar", "cup", "xfinity", "truck"), "indycar" to listOf("indycar"), "formula 1" to listOf("f1", "formula 1", "formula one"), "motogp" to listOf("motogp"), "tennis" to listOf("atp", "wta", "tennis"), "boxing" to listOf("boxing", "wbc", "wba", "wbo", "ibf"))
+        val aliases = mapOf("nfl" to listOf("nfl", "football"), "nba" to listOf("nba", "basketball"), "wnba" to listOf("wnba", "basketball"), "mlb" to listOf("mlb", "baseball"), "nhl" to listOf("nhl", "hockey"), "ufc" to listOf("ufc", "mma"), "premier league" to listOf("epl", "premier league"), "mls" to listOf("mls", "soccer"), "ncaa football" to listOf("ncaa", "college football", "football"), "ncaa basketball" to listOf("ncaa", "college basketball", "basketball"), "nascar" to listOf("nascar", "cup", "xfinity", "truck"), "indycar" to listOf("indycar"), "formula 1" to listOf("f1", "formula 1", "formula one"), "motogp" to listOf("motogp"), "tennis" to listOf("atp", "wta", "tennis"), "boxing" to listOf("boxing", "wbc", "wba", "wbo", "ibf"), "monster jam" to listOf("monster jam", "monster trucks", "monster truck"))
         aliases[eventLeague].orEmpty().forEach { alias -> if (haystack.contains(normalize(alias))) score += 2 }; if (event.broadcast.isNotBlank() && haystack.contains(normalize(event.broadcast))) score += 4; return score
     }
 
