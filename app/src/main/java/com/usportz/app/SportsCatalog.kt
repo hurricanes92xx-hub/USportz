@@ -1,12 +1,13 @@
 package com.usportz.app
 
-/** Stage 2 local sports classification layer. */
+/** Local sports classification layer, including a dedicated NCAA basketball rail. */
 object SportsCatalog {
-    val categories = listOf("All", "Football", "Basketball", "Baseball", "Hockey", "Soccer", "MMA", "Boxing", "Wrestling", "Motorsports", "Tennis", "Golf", "Racing")
+    val categories = listOf("All", "Football", "Basketball", "NCAA Basketball", "Baseball", "Hockey", "Soccer", "MMA", "Boxing", "Wrestling", "Motorsports", "Tennis", "Golf", "Racing")
 
     private val rules = linkedMapOf(
+        "NCAA Basketball" to listOf("mens-college-basketball", "womens-college-basketball", "ncaa basketball", "college basketball", "ncaamb", "ncaaw"),
         "Football" to listOf("nfl", "ncaa football", "college football", "football"),
-        "Basketball" to listOf("nba", "wnba", "ncaa basketball", "college basketball", "basketball"),
+        "Basketball" to listOf("nba", "wnba", "basketball"),
         "Baseball" to listOf("mlb", "ncaa baseball", "college baseball", "baseball"),
         "Hockey" to listOf("nhl", "ncaa hockey", "hockey"),
         "Soccer" to listOf("mls", "epl", "premier league", "champions league", "la liga", "soccer"),
