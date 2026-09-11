@@ -17,9 +17,9 @@ import java.util.zip.GZIPInputStream
 
 data class SportsChannel(val id: String, val name: String, val group: String, val logo: String?, val url: String)
 
-/** Xtream-compatible source bridge. Authentication and channel retrieval use several provider-compatible fallbacks. */
+/** Xtream-compatible source bridge. Network work and cache/index construction stay off the UI thread. */
 object SportsChannelBridge {
-    private const val CACHE_TTL_MS = 5 * 60 * 1000L
+    private const val CACHE_TTL_MS = 15 * 60 * 1000L
     private const val MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000L
     private const val CACHE_FILE = "channel-index.json"
     @Volatile private var cached: List<SportsChannel> = emptyList()
@@ -72,7 +72,6 @@ object SportsChannelBridge {
     }
 
     fun validateXtream(server: String, user: String, pass: String): Boolean = authenticateXtream(server, user, pass) != null
-
     fun normalizeXtreamServer(server: String): String = normalizedServerCandidates(server).firstOrNull().orEmpty()
 
     private fun normalizedServerCandidates(server: String): List<String> {
@@ -144,7 +143,9 @@ object SportsChannelBridge {
         val pass = source.pass
         val playlist = source.playlist
         val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
-        if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt in 0 until CACHE_TTL_MS) return@withContext cached
+
+        // Memory/disk cache is the normal path. A stale cache is safe to show while a later refresh updates it.
+        if (!forceRefresh && cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt <= MAX_STALE_MS) return@withContext cached
         if (!indexing.compareAndSet(false, true)) return@withContext cached
         try {
             var result = emptyList<SportsChannel>()
@@ -229,22 +230,8 @@ object SportsChannelBridge {
     fun cachedChannels(): List<SportsChannel> = cached
     fun isIndexing(): Boolean = indexing.get()
 
-    fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? {
-        if (channels.isEmpty()) return null
-        val index = channelIndex ?: ChannelIndex(channels, SportsChannel::name, SportsChannel::group).also { channelIndex = it }
-        val queryTerms = buildList {
-            event.competitors.forEach { if (it.isNotBlank()) add(it) }
-            if (event.league.isNotBlank()) add(event.league)
-            if (event.broadcast.isNotBlank()) add(event.broadcast)
-        }
-        val candidates = linkedMapOf<String, SportsChannel>()
-        queryTerms.take(4).forEach { q -> index.search(q, 80).forEach { candidates[it.id] = it } }
-        if (candidates.isEmpty()) index.forSport(SportsCatalog.classify(event.name, event.league), 120).forEach { candidates[it.id] = it }
-        val pool = if (candidates.isNotEmpty()) candidates.values else channels.take(500)
-        return pool.asSequence().map { it to SportsSchedule.matchChannel(event, it.name, it.group) }
-            .filter { it.second >= 5 }
-            .maxWithOrNull(compareBy<Pair<SportsChannel, Int>> { it.second }.thenBy { it.first.name.lowercase() })?.first
-    }
+    fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? =
+        GameSourceMatcher.rankMatches(event, channels, 1).firstOrNull()?.channel
 
     private fun fetchAndParse(source: String): List<SportsChannel> {
         val conn = URL(source).openConnection() as HttpURLConnection
@@ -266,7 +253,7 @@ object SportsChannelBridge {
     private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
         val array = JSONArray()
         channels.forEach { c -> array.put(JSONObject().apply { put("id", c.id); put("name", c.name); put("group", c.group); put("logo", c.logo ?: ""); put("url", c.url) }) }
-        val root = JSONObject().apply { put("version", 6); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
+        val root = JSONObject().apply { put("version", 7); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
         val target = File(context.noBackupFilesDir, CACHE_FILE)
         val temp = File(context.noBackupFilesDir, "$CACHE_FILE.tmp")
         runCatching { temp.writeText(root.toString()); if (!temp.renameTo(target)) { target.delete(); temp.renameTo(target) } }
@@ -299,5 +286,5 @@ object SportsChannelBridge {
     }
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
-    private fun clean(value: String?): String = value.orEmpty().trim().takeIf { it.isNotBlank() && !it.equals("null", true) && !it.equals("undefined", true) }.orEmpty()
+    private fun clean(value: String?): String = value.orEmpty().trim()
 }
