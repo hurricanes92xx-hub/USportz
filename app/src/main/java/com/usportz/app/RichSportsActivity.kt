@@ -171,12 +171,13 @@ private fun SportsTab(visible: List<SportsEvent>, allEvents: List<SportsEvent>, 
 }
 
 @Composable
-private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsChannel>, now: Long, play: (SportsChannel) -> Unit, favorites: MutableMap<String, Boolean> = mutableMapOf()) {
+private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsChannel>, now: Long, play: (SportsChannel) -> Unit, favorites: MutableMap<String, Boolean>? = null) {
     val ranked = remember(event.id, channels) { GameSourceMatcher.rankMatches(event, channels, limit = 3) }
     val brand = SportsBranding.find(event.name, event.league)
     val leagueLogo = event.leagueLogo?.takeIf { it.isNotBlank() } ?: BrandAssets.logoUrl(brand)
     val start = parseInstant(event.startTime)?.toEpochMilli()
     val countdown = if (start != null && start > now) formatCountdown(start - now) else ""
+    val isFavorite = favorites?.get(event.id) == true
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -191,9 +192,7 @@ private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsCh
                     Text(SportsPresentation.matchup(event), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(event.detail.ifBlank { formatClock(event.startTime) }, color = Color(0xFF9DA5B7), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                 }
-                if (favorites is SnapshotStateMap) {
-                    IconButton(onClick = { favorites[event.id] = !(favorites[event.id] == true) }) { Icon(if (favorites[event.id] == true) Icons.Default.Star else Icons.Default.StarBorder, "Favorite", tint = if (favorites[event.id] == true) Orange else Color.Gray) }
-                }
+                if (favorites != null) IconButton(onClick = { favorites[event.id] = !isFavorite }) { Icon(if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite", tint = if (isFavorite) Orange else Color.Gray) }
             }
             if (event.competitorLogos.any { it.isNotBlank() }) {
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -228,12 +227,12 @@ private fun LiveTvTab(channels: List<SportsChannel>, selected: String?, onCatego
 }
 
 @Composable
-private fun FavoritesTab(events: List<SportsEvent>, channels: List<SportsChannel>, favorites: Map<String, Boolean>, play: (SportsChannel) -> Unit) {
+private fun FavoritesTab(events: List<SportsEvent>, channels: List<SportsChannel>, favorites: MutableMap<String, Boolean>, play: (SportsChannel) -> Unit) {
     val saved = events.filter { favorites[it.id] == true }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { Text("FAVORITES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black) }
         if (saved.isEmpty()) item { EmptyCard("Nothing saved yet", "Star an event to keep it here.") }
-        else items(saved, key = { "fav-${it.id}" }) { EventCard(it, it.state == "in", channels, System.currentTimeMillis(), play, favorites as MutableMap<String, Boolean>) }
+        else items(saved, key = { "fav-${it.id}" }) { EventCard(it, it.state == "in", channels, System.currentTimeMillis(), play, favorites) }
     }
 }
 
@@ -291,7 +290,7 @@ private fun scheduleBucket(event: SportsEvent, nowMs: Long): ScheduleBucket {
 }
 
 private fun emptyTitle(bucket: ScheduleBucket): String = when (bucket) { ScheduleBucket.LIVE -> "Nothing live right now"; ScheduleBucket.STARTING_SOON -> "No events starting soon"; ScheduleBucket.TODAY -> "No more events today"; ScheduleBucket.TOMORROW -> "Tomorrow is clear"; ScheduleBucket.NEXT_3_DAYS -> "No events in the next 3 days"; ScheduleBucket.COMPLETED -> "No completed events" }
-private fun emptySubtitle(bucket: ScheduleBucket): String = when (bucket) { ScheduleBucket.LIVE -> "The schedule automatically checks again every minute."; ScheduleBucket.STARTING_SOON -> "Starting soon means within two hours."; ScheduleBucket.TODAY -> "Try another sport or check TOMORROW."; ScheduleBucket.TOMORROW -> "Try TODAY or NEXT 3 DAYS."; ScheduleBucket.NEXT_3_DAYS -> "The schedule feed may not have farther-out events yet."; ScheduleBucket.COMPLETED -> "Completed events remain here for reference." }
+private fun emptySubtitle(bucket: ScheduleBucket): String = when (bucket) { ScheduleBucket.LIVE -> "The schedule automatically checks again every minute."; ScheduleBucket.STARTING_SOON -> "Starting soon means within two hours."; ScheduleBucket.TODAY -> "Try another sport or check TOMORROW."; ScheduleBucket.NEXT_3_DAYS -> "The schedule feed may not have farther-out events yet."; ScheduleBucket.COMPLETED -> "Completed events remain here for reference."; ScheduleBucket.TOMORROW -> "Try TODAY or NEXT 3 DAYS." }
 private fun formatCountdown(ms: Long): String { val total = (ms / 1000L).coerceAtLeast(0L); val h = total / 3600L; val m = (total % 3600L) / 60L; return if (h > 0) String.format(Locale.US, "%dh %02dm", h, m) else String.format(Locale.US, "%dm", m) }
 private fun parseInstant(value: String): Instant? = runCatching { Instant.parse(value) }.getOrElse { runCatching { java.time.OffsetDateTime.parse(value).toInstant() }.getOrNull() }
 private fun formatClock(value: String): String = parseInstant(value)?.let { DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()).withZone(ZoneId.systemDefault()).format(it) } ?: value
