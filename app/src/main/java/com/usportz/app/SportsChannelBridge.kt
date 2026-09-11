@@ -1,16 +1,18 @@
 package com.usportz.app
 
 import android.content.Context
+import android.util.JsonReader
+import android.util.JsonToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
-import java.io.File
+import java.io.InputStream
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -21,42 +23,23 @@ import java.util.zip.GZIPInputStream
 
 data class SportsChannel(val id: String, val name: String, val group: String, val logo: String?, val url: String)
 
-/** Xtream-compatible source bridge. Network work and cache/index construction stay off the UI thread. */
+/**
+ * Fast Xtream/M3U bridge.
+ *
+ * Startup reads a small sports-only snapshot from SQLite and returns immediately. A refresh
+ * streams the provider response directly into a new disk generation in 500-row batches, then
+ * atomically activates it. We never build a giant IPTV playlist in memory.
+ */
 object SportsChannelBridge {
     private const val CACHE_TTL_MS = 15 * 60 * 1000L
-    private const val MAX_STALE_MS = 7 * 24 * 60 * 60 * 1000L
-    private const val CACHE_FILE = "channel-index.json"
+    private const val BATCH_SIZE = 500
     @Volatile private var cached: List<SportsChannel> = emptyList()
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedSourceKey = ""
-    @Volatile private var channelIndex: ChannelIndex<SportsChannel>? = null
     private val indexing = AtomicBoolean(false)
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    fun restoreCached(context: Context): List<SportsChannel> {
-        if (cached.isNotEmpty()) return cached
-        val file = File(context.noBackupFilesDir, CACHE_FILE)
-        val restored = runCatching {
-            if (!file.exists()) return@runCatching emptyList()
-            val root = JSONObject(file.readText())
-            val array = root.optJSONArray("channels") ?: JSONArray()
-            cachedSourceKey = root.optString("sourceKey")
-            cachedAt = root.optLong("savedAt", file.lastModified())
-            buildList(array.length()) {
-                for (i in 0 until array.length()) {
-                    val item = array.optJSONObject(i) ?: continue
-                    val url = clean(item.optString("url"))
-                    if (url.isBlank()) continue
-                    add(SportsChannel(item.optString("id"), clean(item.optString("name")).ifBlank { "Channel" }, clean(item.optString("group")).ifBlank { "Live TV" }, clean(item.optString("logo")).ifBlank { null }, url))
-                }
-            }
-        }.getOrElse { emptyList() }
-        if (restored.isNotEmpty()) {
-            cached = restored
-            channelIndex = ChannelIndex(restored, SportsChannel::name, SportsChannel::group)
-        }
-        return cached
-    }
+    fun restoreCached(context: Context): List<SportsChannel> = cached
 
     fun authenticateXtream(server: String, user: String, pass: String): String? {
         val query = credentialsQuery(user, pass)
@@ -71,7 +54,6 @@ object SportsChannelBridge {
                     if (auth == "1" || status.equals("Active", true) || status.equals("Enabled", true)) return base
                 }
             }
-            if (probeM3u("$base/get.php?$query&type=m3u_plus&output=ts") || probeM3u("$base/get.php?$query&type=m3u_plus&output=m3u8")) return base
         }
         return null
     }
@@ -99,7 +81,8 @@ object SportsChannelBridge {
         return listOf(root, alternate).distinct()
     }
 
-    private fun credentialsQuery(user: String, pass: String): String = "username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}"
+    private fun credentialsQuery(user: String, pass: String): String =
+        "username=${URLEncoder.encode(user, "UTF-8")}&password=${URLEncoder.encode(pass, "UTF-8")}"
 
     private fun request(url: String, timeout: Int): String {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -110,181 +93,184 @@ object SportsChannelBridge {
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/json, text/plain, */*")
             conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.7")
+            conn.setRequestProperty("User-Agent", "USportz/1.8")
             if (conn.responseCode !in 200..299) return ""
-            val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
-            stream.bufferedReader().use { it.readText().take(64 * 1024 * 1024) }
+            openDecoded(conn).bufferedReader().use { it.readText().take(8 * 1024 * 1024) }
         } finally { conn.disconnect() }
     }
 
-    private fun probeM3u(url: String): Boolean = runCatching {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        try {
-            conn.connectTimeout = 4_500
-            conn.readTimeout = 8_000
-            conn.instanceFollowRedirects = true
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
-            conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.7")
-            if (conn.responseCode !in 200..299) return@runCatching false
-            val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(conn.inputStream) else conn.inputStream
-            stream.bufferedReader().use { reader ->
-                repeat(1000) {
-                    val line = reader.readLine() ?: return@use false
-                    if (line.contains("#EXTM3U", true) || line.contains("#EXTINF", true)) return@use true
-                }
-                false
-            }
-        } finally { conn.disconnect() }
-    }.getOrDefault(false)
-
-    /**
-     * Returns a cached snapshot immediately for normal UI loads. A forced refresh is different:
-     * it waits for any in-flight index operation, fetches the current source, and only returns
-     * the snapshot when it belongs to the current credentials/playlist. This prevents a newly
-     * signed-in Xtream account from being reported as connected while old channels are still cached.
-     */
+    /** Returns instantly from the local sports snapshot. Refresh work is deliberately detached. */
     suspend fun load(context: Context, forceRefresh: Boolean = false): List<SportsChannel> = withContext(Dispatchers.IO) {
-        if (cached.isEmpty()) restoreCached(context)
-
         val source = SourceStore(context)
         val server = normalizeXtreamServer(source.server)
         val user = source.user
         val pass = source.pass
         val playlist = source.playlist
         val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
-        val now = System.currentTimeMillis()
-        val hasUsableCache = cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt <= MAX_STALE_MS
-        val cacheAge = if (cachedAt > 0L) now - cachedAt else Long.MAX_VALUE
-        val needsRefresh = forceRefresh || cacheAge > CACHE_TTL_MS || cached.isEmpty() || cachedSourceKey != sourceKey
+        val store = SportsChannelDiskStore(context)
+        val diskSnapshot = runCatching { store.activeSnapshot(sourceKey) }.getOrDefault(emptyList())
+        if (diskSnapshot.isNotEmpty()) {
+            cached = diskSnapshot
+            cachedAt = System.currentTimeMillis()
+            cachedSourceKey = sourceKey
+        }
 
         if (forceRefresh) {
             var waited = 0L
-            while (indexing.get() && waited < 30_000L) {
-                delay(100L)
-                waited += 100L
-            }
+            while (indexing.get() && waited < 30_000L) { delay(100L); waited += 100L }
             refreshInternal(context, server, user, pass, playlist, sourceKey)
-            return@withContext if (cachedSourceKey == sourceKey) cached else emptyList()
-        }
-
-        if (hasUsableCache) {
-            if (needsRefresh) refreshScope.launch {
-                refreshInternal(context, server, user, pass, playlist, sourceKey)
+            val refreshed = store.activeSnapshot(sourceKey)
+            if (refreshed.isNotEmpty()) {
+                cached = refreshed
+                cachedAt = System.currentTimeMillis()
+                cachedSourceKey = sourceKey
             }
-            return@withContext cached
+            return@withContext cached.takeIf { cachedSourceKey == sourceKey }.orEmpty()
         }
 
-        if (cached.isNotEmpty() && cachedAt > 0L && now - cachedAt <= MAX_STALE_MS) {
-            refreshScope.launch {
-                refreshInternal(context, server, user, pass, playlist, sourceKey)
-            }
-            return@withContext cached
+        val age = System.currentTimeMillis() - cachedAt
+        val needsRefresh = diskSnapshot.isEmpty() || cachedSourceKey != sourceKey || age > CACHE_TTL_MS
+        if (needsRefresh) refreshScope.launch {
+            refreshInternal(context, server, user, pass, playlist, sourceKey)
         }
-
-        // Cold start: no safe snapshot exists, so fetch once before returning.
-        refreshInternal(context, server, user, pass, playlist, sourceKey)
-        cached
+        // Critical startup behavior: return the disk snapshot immediately, even when a new
+        // provider still needs indexing. The sports schedule is never blocked by IPTV ingest.
+        if (cachedSourceKey == sourceKey) cached else diskSnapshot
     }
 
-    private suspend fun refreshInternal(
-        context: Context,
-        server: String,
-        user: String,
-        pass: String,
-        playlist: String,
-        sourceKey: String
-    ) = withContext(Dispatchers.IO) {
+    private suspend fun refreshInternal(context: Context, server: String, user: String, pass: String, playlist: String, sourceKey: String) = withContext(Dispatchers.IO) {
         if (!indexing.compareAndSet(false, true)) return@withContext
         try {
-            if (cachedSourceKey == sourceKey && cached.isNotEmpty() && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) return@withContext
-            var result = emptyList<SportsChannel>()
+            val store = SportsChannelDiskStore(context)
+            var generation: Long? = null
+            var count = 0
+            fun accept(channel: SportsChannel) {
+                if (generation == null) generation = store.beginGeneration(sourceKey)
+                pending += channel
+                count++
+                if (pending.size >= BATCH_SIZE) flush(store, sourceKey, generation!!)
+            }
+
+            pending.clear()
             if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
                 for (base in normalizedServerCandidates(server)) {
-                    result = runCatching { fetchLiveStreams(base, user, pass) }.getOrDefault(emptyList())
-                    if (result.isNotEmpty()) break
+                    val before = count
+                    runCatching { fetchLiveStreamsStreaming(base, user, pass, ::accept) }
+                    if (count > before) break
                 }
-                if (result.isEmpty()) {
+                if (count == 0) {
                     for (base in normalizedServerCandidates(server)) {
-                        result = fetchXtreamPlaylist(base, user, pass)
-                        if (result.isNotEmpty()) break
+                        val before = count
+                        runCatching { fetchM3uStreaming("$base/get.php?${credentialsQuery(user, pass)}&type=m3u_plus&output=ts", ::accept) }
+                        if (count > before) break
                     }
                 }
             } else if (playlist.isNotBlank()) {
-                result = runCatching { fetchAndParse(playlist) }.getOrDefault(emptyList())
+                runCatching { fetchM3uStreaming(playlist, ::accept) }
             }
-            if (result.isNotEmpty()) {
-                val savedAt = System.currentTimeMillis()
-                cached = result
-                cachedAt = savedAt
+            if (generation != null && count > 0) {
+                flush(store, sourceKey, generation!!)
+                store.activate(sourceKey, generation!!, count)
+                val snapshot = store.activeSnapshot(sourceKey)
+                cached = snapshot
+                cachedAt = System.currentTimeMillis()
                 cachedSourceKey = sourceKey
-                channelIndex = ChannelIndex(result, SportsChannel::name, SportsChannel::group)
-                persist(context, result, sourceKey, savedAt)
             }
-        } finally { indexing.set(false) }
+        } finally {
+            pending.clear()
+            indexing.set(false)
+        }
     }
 
-    private fun fetchLiveStreams(base: String, user: String, pass: String): List<SportsChannel> {
+    private val pending = ArrayList<SportsChannel>(BATCH_SIZE)
+    private fun flush(store: SportsChannelDiskStore, sourceKey: String, generation: Long) {
+        if (pending.isEmpty()) return
+        store.insertBatch(sourceKey, generation, pending.toList())
+        pending.clear()
+    }
+
+    private fun fetchLiveStreamsStreaming(base: String, user: String, pass: String, sink: (SportsChannel) -> Unit): Int {
         val query = "${credentialsQuery(user, pass)}&action=get_live_streams"
-        val bodies = listOf("$base/player_api.php?$query", "$base/panel_api.php?$query")
-        for (url in bodies) {
-            val body = runCatching { request(url, 20_000) }.getOrNull().orEmpty()
-            val array = parseLiveResponse(body) ?: continue
-            val result = parseLiveArray(array, base, user, pass)
-            if (result.isNotEmpty()) return result
+        for (endpoint in listOf("player_api.php", "panel_api.php")) {
+            val conn = runCatching { URL("$base/$endpoint?$query").openConnection() as HttpURLConnection }.getOrNull() ?: continue
+            try {
+                conn.connectTimeout = 4_500
+                conn.readTimeout = 60_000
+                conn.instanceFollowRedirects = true
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("Accept", "application/json, text/plain, */*")
+                conn.setRequestProperty("Accept-Encoding", "gzip")
+                conn.setRequestProperty("User-Agent", "USPortz/1.8")
+                if (conn.responseCode !in 200..299) continue
+                val parsed = streamJson(openDecoded(conn), base, user, pass, sink)
+                if (parsed > 0) return parsed
+            } finally { conn.disconnect() }
         }
-        return emptyList()
+        return 0
     }
 
-    private fun parseLiveResponse(body: String): JSONArray? {
-        val direct = runCatching { JSONArray(body) }.getOrNull()
-        if (direct != null) return direct
-        val obj = runCatching { JSONObject(body) }.getOrNull() ?: return null
-        listOf("live_streams", "streams", "available_channels", "channels", "data").forEach { key ->
-            val array = obj.optJSONArray(key)
-            if (array != null && array.length() > 0) return array
-        }
-        return null
-    }
-
-    private fun parseLiveArray(array: JSONArray, base: String, user: String, pass: String): List<SportsChannel> = buildList(array.length()) {
-        for (i in 0 until array.length()) {
-            val item = array.optJSONObject(i) ?: continue
-            val id = clean(item.optString("stream_id")).ifBlank { clean(item.optString("id")) }
-            val name = clean(item.optString("name")).ifBlank { clean(item.optString("title")) }.ifBlank { "Channel" }
-            if (id.isBlank()) continue
-            val group = clean(item.optString("category_name")).ifBlank { clean(item.optString("category")) }.ifBlank { "Live TV" }
-            val logo = clean(item.optString("stream_icon")).ifBlank { clean(item.optString("icon")) }.ifBlank { clean(item.optString("logo")) }.ifBlank { null }
-            val ext = clean(item.optString("container_extension")).ifBlank { "m3u8" }
-            val direct = clean(item.optString("direct_source"))
-            val url = direct.ifBlank { "$base/live/$user/$pass/$id.$ext" }
-            add(SportsChannel(id, name, group, logo, url))
+    private fun streamJson(input: InputStream, base: String, user: String, pass: String, sink: (SportsChannel) -> Unit): Int {
+        input.use { stream ->
+            JsonReader(InputStreamReader(stream)).use { reader ->
+                return when (reader.peek()) {
+                    JsonToken.BEGIN_ARRAY -> readStreamArray(reader, base, user, pass, sink)
+                    JsonToken.BEGIN_OBJECT -> {
+                        var count = 0
+                        reader.beginObject()
+                        while (reader.hasNext()) {
+                            val key = reader.nextName()
+                            if (key.equals("live_streams", true) || key.equals("streams", true) || key.equals("channels", true) || key.equals("data", true)) {
+                                if (reader.peek() == JsonToken.BEGIN_ARRAY) count += readStreamArray(reader, base, user, pass, sink) else reader.skipValue()
+                            } else reader.skipValue()
+                        }
+                        reader.endObject()
+                        count
+                    }
+                    else -> 0
+                }
+            }
         }
     }
 
-    private fun fetchXtreamPlaylist(base: String, user: String, pass: String): List<SportsChannel> {
-        val query = credentialsQuery(user, pass)
-        val urls = listOf(
-            "$base/get.php?$query&type=m3u_plus&output=ts",
-            "$base/get.php?$query&type=m3u_plus&output=m3u8",
-            "$base/get.php?$query&type=m3u&output=ts",
-            "$base/get.php?$query&type=m3u&output=m3u8"
-        )
-        for (url in urls) {
-            val result = runCatching { fetchAndParse(url) }.getOrDefault(emptyList())
-            if (result.isNotEmpty()) return result
+    private fun readStreamArray(reader: JsonReader, base: String, user: String, pass: String, sink: (SportsChannel) -> Unit): Int {
+        var count = 0
+        reader.beginArray()
+        while (reader.hasNext()) {
+            val channel = readStreamObject(reader, base, user, pass)
+            if (channel != null) { sink(channel); count++ }
         }
-        return emptyList()
+        reader.endArray()
+        return count
     }
 
-    fun cachedChannels(): List<SportsChannel> = cached
-    fun isIndexing(): Boolean = indexing.get()
+    private fun readStreamObject(reader: JsonReader, base: String, user: String, pass: String): SportsChannel? {
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) { reader.skipValue(); return null }
+        var id = ""; var name = ""; var group = "Live TV"; var logo: String? = null; var ext = "m3u8"; var direct = ""
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName().lowercase()) {
+                "stream_id", "id" -> id = nextString(reader)
+                "name", "title" -> name = nextString(reader)
+                "category_name", "category" -> group = nextString(reader).ifBlank { "Live TV" }
+                "stream_icon", "icon", "logo" -> logo = nextString(reader).ifBlank { null }
+                "container_extension" -> ext = nextString(reader).ifBlank { "m3u8" }
+                "direct_source" -> direct = nextString(reader)
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        if (id.isBlank()) return null
+        val displayName = name.ifBlank { "Channel" }
+        val url = direct.ifBlank { "$base/live/$user/$pass/$id.$ext" }
+        return SportsChannel(id, displayName, group, logo, url)
+    }
 
-    fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? =
-        GameSourceMatcher.rankMatches(event, channels, 1).firstOrNull()?.channel
+    private fun nextString(reader: JsonReader): String = when (reader.peek()) {
+        JsonToken.NULL -> { reader.nextNull(); "" }
+        else -> runCatching { reader.nextString() }.getOrElse { reader.skipValue(); "" }
+    }
 
-    private fun fetchAndParse(source: String): List<SportsChannel> {
+    private fun fetchM3uStreaming(source: String, sink: (SportsChannel) -> Unit): Int {
         val conn = URL(source).openConnection() as HttpURLConnection
         return try {
             conn.connectTimeout = 6_000
@@ -293,26 +279,15 @@ object SportsChannelBridge {
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/x-mpegURL, audio/x-mpegurl, text/plain, */*")
             conn.setRequestProperty("Accept-Encoding", "gzip")
-            conn.setRequestProperty("User-Agent", "USportz/1.7")
-            if (conn.responseCode !in 200..299) return emptyList()
-            val raw = conn.inputStream
-            val stream = if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(raw) else raw
-            stream.bufferedReader().use(::parse)
+            conn.setRequestProperty("User-Agent", "USPortz/1.8")
+            if (conn.responseCode !in 200..299) return 0
+            openDecoded(conn).bufferedReader().use { parseM3u(it, sink) }
         } finally { conn.disconnect() }
     }
 
-    private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
-        val array = JSONArray()
-        channels.forEach { c -> array.put(JSONObject().apply { put("id", c.id); put("name", c.name); put("group", c.group); put("logo", c.logo ?: ""); put("url", c.url) }) }
-        val root = JSONObject().apply { put("version", 8); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
-        val target = File(context.noBackupFilesDir, CACHE_FILE)
-        val temp = File(context.noBackupFilesDir, "$CACHE_FILE.tmp")
-        runCatching { temp.writeText(root.toString()); if (!temp.renameTo(target)) { target.delete(); temp.renameTo(target) } }
-    }
-
-    private fun parse(reader: BufferedReader): List<SportsChannel> {
-        val result = ArrayList<SportsChannel>()
+    private fun parseM3u(reader: BufferedReader, sink: (SportsChannel) -> Unit): Int {
         var attrs = emptyMap<String, String>()
+        var count = 0
         while (true) {
             val raw = reader.readLine() ?: break
             val line = raw.trim()
@@ -323,12 +298,13 @@ object SportsChannelBridge {
                     val name = clean(attrs["name"]).ifBlank { clean(attrs["tvg-name"]) }.ifBlank { line.substringAfterLast('/').substringBefore('?').ifBlank { "Channel" } }
                     val group = clean(attrs["group-title"]).ifBlank { clean(attrs["group"]) }.ifBlank { clean(attrs["category-name"]) }.ifBlank { "Live TV" }
                     val logo = clean(attrs["tvg-logo"]).ifBlank { clean(attrs["logo"]) }.ifBlank { null }
-                    result += SportsChannel("${name.lowercase()}|$line".hashCode().toString(), name, group, logo, line)
+                    sink(SportsChannel("${name.lowercase()}|$line".hashCode().toString(), name, group, logo, line))
+                    count++
                     attrs = emptyMap()
                 }
             }
         }
-        return result.distinctBy { it.id }
+        return count
     }
 
     private fun parseAttrs(line: String): Map<String, String> {
@@ -338,6 +314,14 @@ object SportsChannelBridge {
         return map
     }
 
+    private fun openDecoded(conn: HttpURLConnection): InputStream {
+        val raw = conn.inputStream
+        return if (conn.contentEncoding.equals("gzip", true)) GZIPInputStream(raw) else raw
+    }
+
+    fun cachedChannels(): List<SportsChannel> = cached
+    fun isIndexing(): Boolean = indexing.get()
+    fun bestMatch(event: SportsEvent, channels: List<SportsChannel>): SportsChannel? = GameSourceMatcher.rankMatches(event, channels, 1).firstOrNull()?.channel
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
     private fun clean(value: String?): String = value.orEmpty().trim()
 }
