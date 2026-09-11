@@ -45,10 +45,49 @@ object BrandAssets {
     )
 
     private val eventLogos = listOf(
-        Triple("wwe", "raw", COMMONS + "RAW.png"), Triple("wwe", "smackdown", COMMONS + "SmackDown_2019.png"), Triple("wwe", "nxt", COMMONS + "NXT_LOGO.png"),
-        Triple("aew", "dynamite", COMMONS + "AEW_Dynamite_logo_%28simplified%29.jpg"), Triple("aew", "double or nothing", COMMONS + "AEW_Double_or_Nothing_logo.png"), Triple("aew", "battle of the belts", COMMONS + "AEW_Battle_of_the_Belts_logo.png")
+        // WWE weekly shows and specials
+        Triple("wwe", "raw", COMMONS + "RAW.png"),
+        Triple("wwe", "smackdown", COMMONS + "SmackDown_2019.png"),
+        Triple("wwe", "nxt", COMMONS + "NXT_LOGO.png"),
+        Triple("wwe", "evolve", COMMONS + "WWE_Evolve_logo.png"),
+        Triple("wwe", "main event", COMMONS + "WWE_Main_Event_logo.png"),
+        Triple("wwe", "worlds collide", COMMONS + "WWE_Worlds_Collide_logo.png"),
+        Triple("wwe", "money in the bank", COMMONS + "Money_in_the_Bank_logo.png"),
+        Triple("wwe", "survivor series", COMMONS + "Survivor_Series_logo.png"),
+        Triple("wwe", "royal rumble", COMMONS + "Royal_Rumble_logo.png"),
+        Triple("wwe", "wrestlemania", COMMONS + "WrestleMania_42_logo.png"),
+        Triple("wwe", "elimination chamber", COMMONS + "Elimination_Chamber_logo.png"),
+        // AEW weekly shows and major cards
+        Triple("aew", "dynamite", COMMONS + "AEW_Dynamite_logo_%28simplified%29.jpg"),
+        Triple("aew", "collision", COMMONS + "AEW_Collision_logo.png"),
+        Triple("aew", "rebel heart", COMMONS + "AEW_Rebel_Heart_logo.png"),
+        Triple("aew", "all out", COMMONS + "AEW_All_Out_logo.png"),
+        Triple("aew", "wrestledream", COMMONS + "AEW_WrestleDream_logo.png"),
+        Triple("aew", "full gear", COMMONS + "AEW_Full_Gear_logo.png"),
+        Triple("aew", "grand slam", COMMONS + "AEW_Grand_Slam_logo.png"),
+        Triple("aew", "double or nothing", COMMONS + "AEW_Double_or_Nothing_logo.png"),
+        Triple("aew", "forbidden door", COMMONS + "AEW_x_NJPW_Forbidden_Door_logo.png"),
+        Triple("aew", "revolution", COMMONS + "AEW_Revolution_logo.png"),
+        // TNA weekly shows and PPV/specials
+        Triple("tna", "impact", COMMONS + "TNA_iMPACT!_logo.png"),
+        Triple("tna", "bound for glory", COMMONS + "Bound_for_Glory_logo.png"),
+        Triple("tna", "slammiversary", COMMONS + "Slammiversary_logo.png"),
+        Triple("tna", "destination x", COMMONS + "Destination_X_logo.png"),
+        Triple("tna", "hard to kill", COMMONS + "Hard_to_Kill_logo.png"),
+        Triple("tna", "sacrifice", COMMONS + "TNA_Sacrifice_logo.png"),
+        Triple("tna", "rebellion", COMMONS + "TNA_Rebellion_logo.png"),
+        // ROH
+        Triple("roh", "ring of honor", COMMONS + "Ring_of_Honor_Logo_Final%281%29.png")
     )
 
     fun logoUrl(brand: SportsBrand?): String? = brand?.let { brandLogos[it.key] }
-    fun eventLogoUrl(event: SportsEvent, brand: SportsBrand?): String? { val title = "${event.name} ${event.shortName}".lowercase(); return eventLogos.firstOrNull { (key, token, _) -> key == brand?.key && title.contains(token) }?.third }
+
+    fun eventLogoUrl(event: SportsEvent, brand: SportsBrand?): String? {
+        val title = "${event.name} ${event.shortName}".lowercase()
+        return eventLogos.firstOrNull { (key, token, _) -> key == brand?.key && title.contains(token) }?.third
+            ?: when (brand?.key) {
+                "wwe", "aew", "tna", "roh" -> logoUrl(brand)
+                else -> null
+            }
+    }
 }
