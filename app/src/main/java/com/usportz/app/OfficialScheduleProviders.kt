@@ -27,7 +27,8 @@ object OfficialScheduleProviders {
             listOf(
                 async { loadNfl(today, lastDate) },
                 async { loadNcaaFootball(today, lastDate) },
-                async { loadMlb(today, lastDate) }
+                async { loadMlb(today, lastDate) },
+                async { TennisSchedule.load() }
             ).awaitAll().flatten()
         }
     }
@@ -51,7 +52,6 @@ object OfficialScheduleProviders {
                 val a = clean(r[away]); val h = clean(r[home]); if (a.isBlank() || h.isBlank()) return@forEach
                 val start = runCatching {
                     val t = r[time].trim().let { if (it.length == 5) "$it:00" else it }
-                    // nflverse defines gametime as Eastern time, including international games.
                     LocalDateTime.parse("$date $t", DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
                         .atZone(ZoneId.of("America/New_York")).toInstant().toString()
                 }.getOrNull() ?: return@forEach
@@ -81,7 +81,6 @@ object OfficialScheduleProviders {
     }.getOrDefault(emptyList())
 
     private fun loadNcaaFootball(today: LocalDate, lastDate: LocalDate): List<SportsEvent> = runCatching {
-        // NCAA's public scoreboard is week-based for FBS football. Pull the current and next week.
         val anchor = LocalDate.of(today.year, 8, 29)
         val week = (ChronoUnit.DAYS.between(anchor, today).coerceAtLeast(0) / 7).toInt() + 1
         listOf(week, week + 1).distinct().flatMap { w ->
@@ -170,7 +169,7 @@ object OfficialScheduleProviders {
             c.readTimeout = timeout
             c.requestMethod = "GET"
             c.setRequestProperty("Accept", "application/json,text/csv,text/plain,*/*")
-            c.setRequestProperty("User-Agent", "USportz/1.4")
+            c.setRequestProperty("User-Agent", "USPortz/1.4")
             if (c.responseCode !in 200..299) return ""
             c.inputStream.bufferedReader().use { it.readText() }
         } finally { c.disconnect() }
