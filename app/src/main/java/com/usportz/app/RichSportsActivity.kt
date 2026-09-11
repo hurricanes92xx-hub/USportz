@@ -48,7 +48,7 @@ private val Orange2 = Color(0xFFFF9A3D)
 private val Cyan = Color(0xFF14D9FF)
 private val LiveRed = Color(0xFFFF335C)
 
-private enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("STARTING SOON"), TODAY("TODAY"), TOMORROW("TOMORROW"), NEXT_3_DAYS("NEXT 3 DAYS"), COMPLETED("COMPLETED") }
+enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("STARTING SOON"), TODAY("TODAY"), TOMORROW("TOMORROW"), NEXT_3_DAYS("NEXT 3 DAYS"), COMPLETED("COMPLETED") }
 
 @Composable
 private fun RichSportsApp() {
@@ -248,3 +248,79 @@ private fun BottomBar(selected: Int, onSelect: (Int) -> Unit) { NavigationBar(co
 
 @Composable
 private fun SportRail(selected: String, onSport: (String) -> Unit) { LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(SportsCatalog.categories, key = { it }) { sport -> FilterChip(selected = selected == sport, onClick = { onSport(sport) }, label = { Text(sport) }) } } }
+
+@Composable
+private fun ScheduleRail(selected: ScheduleBucket, onSelected: (ScheduleBucket) -> Unit, events: List<SportsEvent>, now: Long) {
+    LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        items(ScheduleBucket.values().toList(), key = { it.name }) { item ->
+            val count = events.count { scheduleBucket(it, now) == item }
+            FilterChip(selected = selected == item, onClick = { onSelected(item) }, label = { Text("${item.label}  $count") })
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String, detail: String, accent: Color) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(4.dp).height(24.dp).background(accent, RoundedCornerShape(3.dp)))
+        Spacer(Modifier.width(9.dp))
+        Column(Modifier.weight(1f)) { Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Black); Text(detail, color = Color.Gray, fontSize = 11.sp) }
+    }
+}
+
+@Composable
+private fun EmptyCard(title: String, subtitle: String) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp)) { Column(Modifier.padding(18.dp)) { Text(title, color = Color.White, fontWeight = FontWeight.Bold); Text(subtitle, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) } }
+}
+
+private fun emptyTitle(bucket: ScheduleBucket): String = when (bucket) {
+    ScheduleBucket.LIVE -> "Nothing live right now"
+    ScheduleBucket.STARTING_SOON -> "No events starting soon"
+    ScheduleBucket.TODAY -> "No more events today"
+    ScheduleBucket.TOMORROW -> "Nothing scheduled tomorrow"
+    ScheduleBucket.NEXT_3_DAYS -> "No events in the next three days"
+    ScheduleBucket.COMPLETED -> "No completed events"
+}
+
+private fun emptySubtitle(bucket: ScheduleBucket): String = when (bucket) {
+    ScheduleBucket.LIVE -> "USportz will refresh the schedule automatically."
+    ScheduleBucket.STARTING_SOON -> "Events within the next six hours appear here."
+    ScheduleBucket.TODAY -> "Try another sport or check TOMORROW for the next slate."
+    ScheduleBucket.TOMORROW -> "The schedule will update as providers publish events."
+    ScheduleBucket.NEXT_3_DAYS -> "Try another sport or refresh the schedule."
+    ScheduleBucket.COMPLETED -> "Finished events remain available here for reference."
+}
+
+private fun parseInstant(value: String): Instant? = runCatching { Instant.parse(value) }.getOrNull()
+
+private fun scheduleBucket(event: SportsEvent, nowMs: Long): ScheduleBucket {
+    val start = parseInstant(event.startTime)?.toEpochMilli() ?: return ScheduleBucket.TODAY
+    val day = 86_400_000L
+    val delta = start - nowMs
+    val localZone = ZoneId.systemDefault()
+    val today = Instant.ofEpochMilli(nowMs).atZone(localZone).toLocalDate()
+    val eventDay = Instant.ofEpochMilli(start).atZone(localZone).toLocalDate()
+    return when {
+        event.state == "in" || (delta <= 0 && delta > -4 * 60 * 60 * 1000L) -> ScheduleBucket.LIVE
+        delta > 0 && delta <= 6 * 60 * 60 * 1000L -> ScheduleBucket.STARTING_SOON
+        eventDay == today -> ScheduleBucket.TODAY
+        eventDay == today.plusDays(1) -> ScheduleBucket.TOMORROW
+        eventDay.isAfter(today) && eventDay <= today.plusDays(3) -> ScheduleBucket.NEXT_3_DAYS
+        start < nowMs -> ScheduleBucket.COMPLETED
+        else -> ScheduleBucket.NEXT_3_DAYS
+    }
+}
+
+private fun formatCountdown(ms: Long): String {
+    val totalMinutes = (ms.coerceAtLeast(0L) / 60_000L)
+    val days = totalMinutes / (24 * 60)
+    val hours = (totalMinutes / 60) % 24
+    val minutes = totalMinutes % 60
+    return when {
+        days > 0 -> "${days}d ${hours}h"
+        hours > 0 -> "${hours}h ${minutes}m"
+        else -> "${minutes}m"
+    }
+}
+
+private fun formatClock(value: String): String = parseInstant(value)?.atZone(ZoneId.systemDefault())?.format(DateTimeFormatter.ofPattern("EEE, MMM d • h:mm a", Locale.getDefault())) ?: value
