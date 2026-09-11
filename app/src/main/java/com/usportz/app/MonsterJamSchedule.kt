@@ -1,18 +1,16 @@
 package com.usportz.app
 
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 
 /**
  * Official Monster Jam free-YouTube live stream bridge.
  *
  * Monster Jam publishes its live-event schedule on its official streaming page and
- * sends viewers to the official @MonsterJam YouTube channel. We keep the published
- * live-stream dates/times here as a small, fast schedule layer and always open the
- * official YouTube Live page rather than extracting or proxying YouTube media URLs.
+ * sends viewers to the official @MonsterJam YouTube channel. USportz opens that
+ * official live page instead of extracting or proxying YouTube media URLs.
  */
 object MonsterJamSchedule {
     const val YOUTUBE_LIVE_URL = "https://www.youtube.com/@MonsterJam/live"
@@ -37,13 +35,19 @@ object MonsterJamSchedule {
         .map { show ->
             val local = LocalDateTime.of(show.date, java.time.LocalTime.of(show.hour, show.minute))
             val instant = local.atZone(ZoneId.of("America/New_York")).toInstant()
+            val now = Instant.now()
+            val state = when {
+                now.isBefore(instant) -> "pre"
+                now.isBefore(instant.plusSeconds(4 * 60 * 60L)) -> "in"
+                else -> "post"
+            }
             SportsEvent(
                 id = "monster-jam-youtube:${show.date}:${show.city}",
                 sport = "racing",
                 league = "Monster Jam",
                 name = "Monster Jam: ${show.city}",
                 shortName = show.city,
-                state = if (instant.isBefore(java.time.Instant.now())) "post" else "pre",
+                state = state,
                 startTime = instant.toString(),
                 competitors = emptyList(),
                 competitorLogos = emptyList(),
@@ -64,8 +68,6 @@ fun monsterJamYouTubeUrl(event: SportsEvent): String? =
 fun openMonsterJamYouTube(activity: android.app.Activity) {
     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(MonsterJamSchedule.YOUTUBE_LIVE_URL))
     val youtubePackage = "com.google.android.youtube"
-    if (runCatching { activity.packageManager.getPackageInfo(youtubePackage, 0) }.isSuccess) {
-        intent.setPackage(youtubePackage)
-    }
+    if (runCatching { activity.packageManager.getPackageInfo(youtubePackage, 0) }.isSuccess) intent.setPackage(youtubePackage)
     activity.startActivity(intent)
 }
