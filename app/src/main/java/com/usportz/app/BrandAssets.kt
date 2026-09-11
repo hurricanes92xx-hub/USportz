@@ -29,6 +29,7 @@ object BrandAssets {
         "sudamericana" to "https://a.espncdn.com/i/teamlogos/leagues/500/conmebol.sudamericana.png",
         "fifa" to "https://a.espncdn.com/i/teamlogos/leagues/500/fifa.png",
         "ufc" to "https://a.espncdn.com/i/teamlogos/leagues/500/ufc.png",
+        "dwcs" to COMMONS + "Dana_White%27s_Contender_Series-logo.jpg",
         "wwe" to COMMONS + "WWElogo2014.png",
         "aew" to COMMONS + "All_Elite_Wrestling_logo_2023.png",
         "tna" to COMMONS + "TNA-logo-June-2024-v2.png",
