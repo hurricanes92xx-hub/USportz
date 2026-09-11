@@ -13,7 +13,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/** Multi-provider schedule engine with cross-source de-duplication, live-state correction and logo preference. */
+/** Fast, resilient multi-provider sports schedule engine. */
 data class SportsEvent(
     val id: String,
     val sport: String,
@@ -31,17 +31,19 @@ data class SportsEvent(
 
 object SportsSchedule {
     private data class Feed(val sport: String, val league: String)
+
     private const val CACHE_TTL_MS = 2 * 60 * 1000L
     private const val LOOKAHEAD_DAYS = 7L
-    private const val HTTP_CONNECT_MS = 4500
-    private const val HTTP_READ_MS = 9000
+    private const val HTTP_CONNECT_MS = 3500
+    private const val HTTP_READ_MS = 6500
+    private val feedDispatcher = Dispatchers.IO.limitedParallelism(8)
+
     @Volatile private var cached: List<SportsEvent> = emptyList()
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedDay = ""
 
-    // Keep the core leagues fast, but cover the major domestic/international competitions
-    // that are active across the sports calendar rather than treating a quiet NBA/WNBA day
-    // as a quiet sports day.
+    // Broad coverage, but fetched with bounded concurrency so one bad/slow league cannot
+    // starve MLB, college football, soccer, etc. on the live dashboard.
     private val feeds = listOf(
         Feed("football", "nfl"), Feed("football", "college-football"), Feed("football", "cfl"), Feed("football", "ufl"),
         Feed("basketball", "nba"), Feed("basketball", "wnba"), Feed("basketball", "mens-college-basketball"), Feed("basketball", "womens-college-basketball"), Feed("basketball", "fiba"),
@@ -66,26 +68,40 @@ object SportsSchedule {
         val last = today.plusDays(LOOKAHEAD_DAYS)
         val source = if (sourceChannels.isNotEmpty()) sourceChannels else SportsChannelBridge.cachedChannels()
         val monsterJam = MonsterJamSchedule.load(today, last)
+
         if (!forceRefresh && cached.isNotEmpty() && cachedDay == todayKey && now - cachedAt < CACHE_TTL_MS) {
-            val liveAware = dedupeBest(cached + monsterJam).map { refreshLiveState(it, now) }
-            return@withContext prioritizeSourceMatches(liveAware, source)
+            return@withContext prioritizeSourceMatches(
+                dedupeBest(cached + monsterJam).map { refreshLiveState(it, now) },
+                source
+            )
         }
+
         val (espn, dedicated, official) = coroutineScope {
-            val espnJob = async { feeds.map { f -> async { fetchFeed(f) } }.awaitAll().flatten() }
+            val espnJob = async {
+                feeds.map { feed ->
+                    async(feedDispatcher) { fetchFeed(feed, today, last) }
+                }.awaitAll().flatten()
+            }
             val dedicatedJob = async { DedicatedSchedule.load() }
             val officialJob = async { OfficialScheduleProviders.load(today, last) }
             Triple(espnJob.await(), dedicatedJob.await(), officialJob.await())
         }
+
         val incoming = sanitizeWindow(espn + dedicated + official + monsterJam, now)
         val retained = cached.filter { event ->
             val start = startEpochMs(event.startTime) ?: return@filter false
             val day = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate()
             !day.isBefore(today) && !day.isAfter(last)
         }.map { refreshLiveState(it, now) }
+
         val fresh = dedupeBest(incoming + retained)
             .map { refreshLiveState(it, now) }
-            .sortedWith(compareByDescending<SportsEvent> { it.state == "in" }.thenBy { startEpochMs(it.startTime) ?: Long.MAX_VALUE })
+            .sortedWith(
+                compareByDescending<SportsEvent> { it.state == "in" }
+                    .thenBy { startEpochMs(it.startTime) ?: Long.MAX_VALUE }
+            )
             .take(2500)
+
         if (fresh.isNotEmpty()) {
             cached = fresh
             cachedAt = now
@@ -101,11 +117,15 @@ object SportsSchedule {
     private fun dedupeBest(events: List<SportsEvent>): List<SportsEvent> = events
         .groupBy { canonicalId(it) }
         .values
-        .mapNotNull { group -> group.maxWithOrNull(compareBy<SportsEvent> { qualityScore(it) }.thenBy { it.state == "in" }) }
+        .mapNotNull { group ->
+            group.maxWithOrNull(
+                compareBy<SportsEvent> { qualityScore(it) }
+                    .thenBy { it.state == "in" }
+            )
+        }
 
     private fun qualityScore(event: SportsEvent): Int {
-        var score = 0
-        score += event.competitorLogos.count { it.isNotBlank() } * 100
+        var score = event.competitorLogos.count { it.isNotBlank() } * 100
         if (!event.leagueLogo.isNullOrBlank()) score += 50
         if (event.broadcast.isNotBlank()) score += 15
         if (event.detail.isNotBlank()) score += 5
@@ -128,16 +148,21 @@ object SportsSchedule {
         .replace(" university ", " ")
         .replace(" university$", "")
 
-    private fun fetchFeed(feed: Feed): List<SportsEvent> {
-        val today = LocalDate.now()
-        val dates = "${today.format(DateTimeFormatter.BASIC_ISO_DATE)}-${today.plusDays(LOOKAHEAD_DAYS).format(DateTimeFormatter.BASIC_ISO_DATE)}"
+    private fun fetchFeed(feed: Feed, today: LocalDate, last: LocalDate): List<SportsEvent> {
+        val date = today.format(DateTimeFormatter.BASIC_ISO_DATE)
+        val range = "$date-${last.format(DateTimeFormatter.BASIC_ISO_DATE)}"
         val base = "https://site.api.espn.com/apis/site/v2/sports/${feed.sport}/${feed.league}/scoreboard"
-        val urls = listOf(
-            "$base?dates=$dates",
-            "$base?dates=${today.format(DateTimeFormatter.BASIC_ISO_DATE)}",
-            "https://site.api.espn.com/apis/site/v3/sports/${feed.sport}/${feed.league}/scoreboard?dates=$dates"
-        )
-        for (url in urls) {
+
+        // Today's scoreboard is the critical path for LIVE NOW. The previous implementation
+        // tried a 7-day request first for every feed; with dozens of feeds that could create a
+        // wall of slow requests and leave the live dashboard empty. Today is deliberately first.
+        val urls = buildList {
+            add("$base?dates=$date&limit=500")
+            if (feed.league == "college-football") add("$base?dates=$date&limit=500&groups=80")
+            add("$base?dates=$range&limit=500")
+            add("https://site.api.espn.com/apis/site/v3/sports/${feed.sport}/${feed.league}/scoreboard?dates=$date&limit=500")
+        }
+        for (url in urls.distinct()) {
             val events = fetchJson(url, feed)
             if (events.isNotEmpty()) return events
         }
@@ -145,25 +170,32 @@ object SportsSchedule {
     }
 
     private fun fetchJson(url: String, feed: Feed): List<SportsEvent> = runCatching {
-        val c = URL(url).openConnection() as HttpURLConnection
+        val connection = URL(url).openConnection() as HttpURLConnection
         try {
-            c.connectTimeout = HTTP_CONNECT_MS
-            c.readTimeout = HTTP_READ_MS
-            c.requestMethod = "GET"
-            c.setRequestProperty("Accept", "application/json")
-            c.setRequestProperty("User-Agent", "USPortz/1.4")
-            if (c.responseCode !in 200..299) return emptyList()
-            parseEspn(c.inputStream.bufferedReader().use { it.readText() }, feed)
+            connection.connectTimeout = HTTP_CONNECT_MS
+            connection.readTimeout = HTTP_READ_MS
+            connection.requestMethod = "GET"
+            connection.instanceFollowRedirects = true
+            connection.useCaches = false
+            connection.setRequestProperty("Accept", "application/json,text/plain,*/*")
+            connection.setRequestProperty("Cache-Control", "no-cache")
+            connection.setRequestProperty("User-Agent", "USPortz/1.5 Android")
+            if (connection.responseCode !in 200..299) return emptyList()
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            parseEspn(body, feed)
         } finally {
-            c.disconnect()
+            connection.disconnect()
         }
     }.getOrDefault(emptyList())
 
     private fun parseEspn(body: String, feed: Feed): List<SportsEvent> = runCatching {
         val root = JSONObject(body)
         val events = root.optJSONArray("events") ?: return emptyList()
-        val rootLeagueLogo = safe(root.optJSONArray("leagues")?.optJSONObject(0)?.optJSONArray("logos")?.optJSONObject(0)?.optString("href"))
+        val rootLeagueLogo = safe(
+            root.optJSONArray("leagues")?.optJSONObject(0)?.optJSONArray("logos")?.optJSONObject(0)?.optString("href")
+        )
         val fallback = BrandAssets.logoUrl(SportsBranding.find("", feed.league))
+
         buildList {
             for (i in 0 until events.length()) {
                 val event = events.optJSONObject(i) ?: continue
@@ -172,32 +204,47 @@ object SportsSchedule {
                 val names = ArrayList<String>()
                 val logos = ArrayList<String>()
                 for (j in 0 until competitors.length()) {
-                    val team = competitors.optJSONObject(j)?.optJSONObject("team") ?: continue
-                    val name = safe(team.optString("displayName")).ifBlank { safe(team.optString("shortDisplayName")) }
+                    val competitor = competitors.optJSONObject(j) ?: continue
+                    val team = competitor.optJSONObject("team") ?: continue
+                    val name = safe(team.optString("displayName"))
+                        .ifBlank { safe(team.optString("shortDisplayName")) }
                     if (name.isNotBlank()) {
                         names += name
-                        logos += safe(team.optString("logo")).ifBlank { safe(team.optJSONArray("logos")?.optJSONObject(0)?.optString("href")) }
+                        logos += safe(team.optString("logo"))
+                            .ifBlank { safe(team.optJSONArray("logos")?.optJSONObject(0)?.optString("href")) }
                     }
                 }
+
                 val status = competition.optJSONObject("status")?.optJSONObject("type")
                 val rawName = safe(event.optString("name"))
+                val startTime = safe(event.optString("date"))
+                    .ifBlank { safe(competition.optString("date")) }
+                if (startTime.isBlank()) continue
+
                 val displayLeague = SportsBranding.label(rawName, feed.league)
                 val broadcastObj = competition.optJSONArray("broadcasts")?.optJSONObject(0)
-                val broadcast = safe(broadcastObj?.optString("names")).ifBlank { safe(broadcastObj?.optString("market")) }
+                val broadcast = safe(broadcastObj?.optString("names"))
+                    .ifBlank { safe(broadcastObj?.optString("market")) }
                 val eventLogo = safe(event.optJSONArray("logos")?.optJSONObject(0)?.optString("href"))
+
                 add(
                     SportsEvent(
-                        id = safe(event.optString("id")).ifBlank { "espn:${feed.sport}:${feed.league}:$i:${safe(event.optString("date"))}" },
+                        id = safe(event.optString("id"))
+                            .ifBlank { "espn:${feed.sport}:${feed.league}:$i:$startTime" },
                         sport = feed.sport,
                         league = displayLeague,
                         name = rawName,
                         shortName = safe(event.optString("shortName")),
-                        state = normalizeState(safe(status?.optString("state")), safe(status?.optString("name"))),
-                        startTime = safe(event.optString("date")),
+                        state = normalizeState(
+                            safe(status?.optString("state")),
+                            safe(status?.optString("name"))
+                        ),
+                        startTime = startTime,
                         competitors = names,
                         competitorLogos = logos,
                         leagueLogo = eventLogo.ifBlank { rootLeagueLogo }.ifBlank { fallback },
-                        detail = safe(status?.optString("detail")).ifBlank { safe(status?.optString("shortDetail")) },
+                        detail = safe(status?.optString("detail"))
+                            .ifBlank { safe(status?.optString("shortDetail")) },
                         broadcast = broadcast
                     )
                 )
@@ -237,13 +284,13 @@ object SportsSchedule {
 
     private fun refreshLiveState(event: SportsEvent, now: Long): SportsEvent = event.copy(state = effectiveState(event, now))
 
-    /** Providers occasionally leave a game as scheduled after kickoff; correct that from the authoritative start timestamp. */
+    /** Schedule providers can lag their status field. Start time is the authoritative live fallback. */
     private fun effectiveState(event: SportsEvent, now: Long): String {
         val start = startEpochMs(event.startTime) ?: return event.state
-        if (event.state == "post" && now > start + 6 * 60 * 60 * 1000L) return "post"
+        val sixHours = 6 * 60 * 60 * 1000L
         return when {
             now < start -> "pre"
-            now <= start + 6 * 60 * 60 * 1000L -> "in"
+            now <= start + sixHours -> "in"
             else -> "post"
         }
     }
@@ -259,12 +306,19 @@ object SportsSchedule {
         if (events.isEmpty() || channels.isEmpty()) return events
         return events.asSequence()
             .map { it to sourceMatchScore(it, channels) }
-            .sortedWith(compareByDescending<Pair<SportsEvent, Int>> { it.second > 0 }.thenByDescending { it.second }.thenByDescending { it.first.state == "in" }.thenBy { startEpochMs(it.first.startTime) ?: Long.MAX_VALUE })
+            .sortedWith(
+                compareByDescending<Pair<SportsEvent, Int>> { it.second > 0 }
+                    .thenByDescending { it.second }
+                    .thenByDescending { it.first.state == "in" }
+                    .thenBy { startEpochMs(it.first.startTime) ?: Long.MAX_VALUE }
+            )
             .map { it.first }
             .toList()
     }
 
-    fun sourceMatchScore(event: SportsEvent, channels: List<SportsChannel>): Int = channels.asSequence().map { matchChannel(event, it.name, it.group) }.maxOrNull() ?: 0
+    fun sourceMatchScore(event: SportsEvent, channels: List<SportsChannel>): Int = channels.asSequence()
+        .map { matchChannel(event, it.name, it.group) }
+        .maxOrNull() ?: 0
 
     fun matchChannel(event: SportsEvent, channelName: String, group: String): Int {
         val haystack = normalize("$channelName $group")
@@ -276,18 +330,52 @@ object SportsSchedule {
         event.competitors.forEach { team ->
             val n = normalize(team)
             if (n.length >= 4 && haystack.contains(n)) score += 5
-            team.split(Regex("[^A-Za-z0-9]+" )).filter { it.length >= 4 }.forEach { token -> if (haystack.contains(token.lowercase())) score += 2 }
+            team.split(Regex("[^A-Za-z0-9]+"))
+                .filter { it.length >= 4 }
+                .forEach { token -> if (haystack.contains(token.lowercase())) score += 2 }
         }
         val aliases = mapOf(
-            "nfl" to listOf("nfl", "football"), "nba" to listOf("nba", "basketball"), "wnba" to listOf("wnba", "basketball"), "mlb" to listOf("mlb", "baseball"), "nhl" to listOf("nhl", "hockey"), "ufc" to listOf("ufc", "mma"), "premier league" to listOf("epl", "premier league"), "mls" to listOf("mls", "soccer"), "ncaa football" to listOf("ncaa", "college football", "football"), "ncaa basketball" to listOf("ncaa", "college basketball", "basketball"), "nascar" to listOf("nascar", "cup", "xfinity", "truck"), "indycar" to listOf("indycar"), "formula 1" to listOf("f1", "formula 1", "formula one"), "motogp" to listOf("motogp"), "tennis" to listOf("atp", "wta", "tennis"), "boxing" to listOf("boxing", "wbc", "wba", "wbo", "ibf"), "monster jam" to listOf("monster jam", "monster trucks", "monster truck")
+            "nfl" to listOf("nfl", "football"),
+            "nba" to listOf("nba", "basketball"),
+            "wnba" to listOf("wnba", "basketball"),
+            "mlb" to listOf("mlb", "baseball"),
+            "nhl" to listOf("nhl", "hockey"),
+            "ufc" to listOf("ufc", "mma"),
+            "premier league" to listOf("epl", "premier league"),
+            "mls" to listOf("mls", "soccer"),
+            "ncaa football" to listOf("ncaa", "college football", "football"),
+            "ncaa basketball" to listOf("ncaa", "college basketball", "basketball"),
+            "nascar" to listOf("nascar", "cup", "xfinity", "truck"),
+            "indycar" to listOf("indycar"),
+            "formula 1" to listOf("f1", "formula 1", "formula one"),
+            "motogp" to listOf("motogp"),
+            "tennis" to listOf("atp", "wta", "tennis"),
+            "boxing" to listOf("boxing", "wbc", "wba", "wbo", "ibf"),
+            "monster jam" to listOf("monster jam", "monster trucks", "monster truck")
         )
         aliases[eventLeague].orEmpty().forEach { alias -> if (haystack.contains(normalize(alias))) score += 2 }
         if (event.broadcast.isNotBlank() && haystack.contains(normalize(event.broadcast))) score += 4
         return score
     }
 
-    private fun startEpochMs(value: String): Long? = runCatching { Instant.parse(value).toEpochMilli() }.getOrElse { runCatching { java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrElse { value.toLongOrNull()?.let { if (it < 100000000000L) it * 1000L else it } } }
-    private fun localDate(value: String): LocalDate? = startEpochMs(value)?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }
-    private fun safe(value: String?): String = value.orEmpty().trim().takeIf { it.isNotBlank() && !it.equals("null", true) && !it.equals("undefined", true) }.orEmpty()
-    private fun normalize(value: String): String = value.lowercase().replace("&", " and ").replace(Regex("[^a-z0-9]+"), " ").trim()
+    private fun startEpochMs(value: String): Long? = runCatching {
+        Instant.parse(value).toEpochMilli()
+    }.getOrElse {
+        runCatching { java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrElse {
+            value.toLongOrNull()?.let { if (it < 100000000000L) it * 1000L else it }
+        }
+    }
+
+    private fun localDate(value: String): LocalDate? = startEpochMs(value)?.let {
+        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
+    }
+
+    private fun safe(value: String?): String = value.orEmpty().trim()
+        .takeIf { it.isNotBlank() && !it.equals("null", true) && !it.equals("undefined", true) }
+        .orEmpty()
+
+    private fun normalize(value: String): String = value.lowercase()
+        .replace("&", " and ")
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .trim()
 }
