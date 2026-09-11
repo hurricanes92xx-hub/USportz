@@ -5,25 +5,29 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Premium USportz badge: electric ring + bold U + forward slash. -->
+    <!-- USportz: neon-orange sports badge with a ball/motion mark and bold U. -->
     <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#20C8FF"
-        android:strokeWidth="5"
-        android:pathData="M54,17 A37,37 0,1 0,54,91 A37,37 0,1 0,54,17" />
+        android:fillColor="#FF6A00"
+        android:pathData="M54,13 A41,41 0,1 0,54,95 A41,41 0,1 0,54,13" />
+    <path
+        android:fillColor="#080808"
+        android:pathData="M54,19 A35,35 0,1 0,54,89 A35,35 0,1 0,54,19" />
 
+    <!-- Bold U / stadium-bowl silhouette -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M31,31 L42,31 L42,55 Q42,66 54,66 Q66,66 66,55 L66,31 L77,31 L77,56 Q77,77 54,77 Q31,77 31,56 Z" />
+        android:pathData="M30,30 L41,30 L41,54 Q41,67 54,67 Q67,67 67,54 L67,30 L78,30 L78,55 Q78,78 54,78 Q30,78 30,55 Z" />
 
+    <!-- Forward motion / ball-strike accent -->
     <path
-        android:fillColor="#20C8FF"
-        android:pathData="M61,27 L78,27 L69,43 L80,43 L55,70 L60,51 L50,51 Z" />
+        android:fillColor="#FF6A00"
+        android:pathData="M59,27 L76,27 L68,40 L80,40 L55,70 L60,51 L49,51 Z" />
 
+    <!-- Speed lines -->
     <path
-        android:fillColor="#147BFF"
-        android:pathData="M22,67 L36,67 L33,72 L21,72 Z" />
+        android:fillColor="#FF9A3D"
+        android:pathData="M18,67 L34,67 L30,72 L17,72 Z" />
     <path
-        android:fillColor="#20C8FF"
-        android:pathData="M20,75 L32,75 L29,80 L19,80 Z" />
+        android:fillColor="#FF6A00"
+        android:pathData="M15,76 L29,76 L25,81 L14,81 Z" />
 </vector>
