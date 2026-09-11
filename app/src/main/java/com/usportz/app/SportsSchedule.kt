@@ -49,7 +49,7 @@ object SportsSchedule {
         Feed("soccer", "ita.1"), Feed("soccer", "fra.1"), Feed("soccer", "ned.1"), Feed("soccer", "por.1"), Feed("soccer", "sco.1"),
         Feed("soccer", "uefa.champions"), Feed("soccer", "uefa.europa"), Feed("soccer", "conmebol.libertadores"), Feed("soccer", "conmebol.sudamericana"), Feed("soccer", "fifa.world"),
         Feed("mma", "ufc"), Feed("boxing", "boxing"), Feed("golf", "pga"), Feed("golf", "lpga"), Feed("tennis", "atp"), Feed("tennis", "wta"),
-        Feed("racing", "f1"), Feed("racing", "irl"), Feed("racing", "nascar-premier"), Feed("racing", "nascar-secondary"), Feed("racing", "nascar-truck")
+        Feed("racing", "f1"), Feed("racing", "irl"), Feed("racing", "nascar-cup-series"), Feed("racing", "nascar-xfinity-series"), Feed("racing", "nascar-truck-series")
     )
 
     suspend fun load(forceRefresh: Boolean = false, sourceChannels: List<SportsChannel> = emptyList()): List<SportsEvent> = loadInternal(forceRefresh, sourceChannels)
@@ -99,7 +99,7 @@ object SportsSchedule {
 
     private fun fetchJson(url: String, feed: Feed): List<SportsEvent> = runCatching {
         val c = URL(url).openConnection() as HttpURLConnection
-        try { c.connectTimeout = HTTP_CONNECT_MS; c.readTimeout = HTTP_READ_MS; c.requestMethod = "GET"; c.setRequestProperty("Accept", "application/json"); c.setRequestProperty("User-Agent", "USportz/1.3"); if (c.responseCode !in 200..299) return emptyList(); parseEspn(c.inputStream.bufferedReader().use { it.readText() }, feed) }
+        try { c.connectTimeout = HTTP_CONNECT_MS; c.readTimeout = HTTP_READ_MS; c.requestMethod = "GET"; c.setRequestProperty("Accept", "application/json"); c.setRequestProperty("User-Agent", "USportz/1.4"); if (c.responseCode !in 200..299) return emptyList(); parseEspn(c.inputStream.bufferedReader().use { it.readText() }, feed) }
         finally { c.disconnect() }
     }.getOrDefault(emptyList())
 
@@ -122,9 +122,20 @@ object SportsSchedule {
 
     private fun normalizeState(state: String, name: String): String { val s = state.lowercase(); val n = name.lowercase(); return when { s == "in" || n.contains("in progress") || n.contains("live") || n == "halftime" -> "in"; s == "post" || n.contains("final") || n.contains("completed") -> "post"; else -> "pre" } }
 
-    private fun sanitizeWindow(events: List<SportsEvent>, now: Long): List<SportsEvent> {
+    private fun sanitizeWindow(events: List<SportsEvent>, @Suppress("UNUSED_PARAMETER") now: Long): List<SportsEvent> {
         val today = LocalDate.now(); val last = today.plusDays(LOOKAHEAD_DAYS)
-        return events.mapNotNull { event -> val start = startEpochMs(event.startTime) ?: return@mapNotNull null; val day = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate(); if (day.isBefore(today) || day.isAfter(last)) return@mapNotNull null; val state = if (event.state != "in" && event.state != "post" && start <= now) "post" else event.state; event.copy(name = safe(event.name), shortName = safe(event.shortName), competitors = event.competitors.map(::safe).filter(String::isNotBlank), detail = safe(event.detail), broadcast = safe(event.broadcast), state = state) }
+        return events.mapNotNull { event ->
+            val start = startEpochMs(event.startTime) ?: return@mapNotNull null
+            val day = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate()
+            if (day.isBefore(today) || day.isAfter(last)) return@mapNotNull null
+            event.copy(
+                name = safe(event.name), shortName = safe(event.shortName),
+                competitors = event.competitors.map(::safe).filter(String::isNotBlank),
+                competitorLogos = event.competitorLogos.map(::safe),
+                leagueLogo = safe(event.leagueLogo).ifBlank { null },
+                detail = safe(event.detail), broadcast = safe(event.broadcast), state = event.state
+            )
+        }
     }
 
     private fun startEpochMs(value: String): Long? = runCatching { Instant.parse(value).toEpochMilli() }.getOrElse { runCatching { java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrElse { value.toLongOrNull()?.let { if (it < 100000000000L) it * 1000L else it } } }
