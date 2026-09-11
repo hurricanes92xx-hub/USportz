@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -139,10 +140,10 @@ object SportsChannelBridge {
     }.getOrDefault(false)
 
     /**
-     * Returns the current snapshot immediately whenever one exists. If the snapshot is
-     * older than CACHE_TTL_MS, a provider refresh is started in the background. The caller
-     * never waits for a 20K-100K channel playlist to download, parse, index, or persist.
-     * A cold start with no cache still performs one foreground load so the UI has data.
+     * Returns a cached snapshot immediately for normal UI loads. A forced refresh is different:
+     * it waits for any in-flight index operation, fetches the current source, and only returns
+     * the snapshot when it belongs to the current credentials/playlist. This prevents a newly
+     * signed-in Xtream account from being reported as connected while old channels are still cached.
      */
     suspend fun load(context: Context, forceRefresh: Boolean = false): List<SportsChannel> = withContext(Dispatchers.IO) {
         if (cached.isEmpty()) restoreCached(context)
@@ -157,6 +158,16 @@ object SportsChannelBridge {
         val hasUsableCache = cached.isNotEmpty() && cachedSourceKey == sourceKey && now - cachedAt <= MAX_STALE_MS
         val cacheAge = if (cachedAt > 0L) now - cachedAt else Long.MAX_VALUE
         val needsRefresh = forceRefresh || cacheAge > CACHE_TTL_MS || cached.isEmpty() || cachedSourceKey != sourceKey
+
+        if (forceRefresh) {
+            var waited = 0L
+            while (indexing.get() && waited < 30_000L) {
+                delay(100L)
+                waited += 100L
+            }
+            refreshInternal(context, server, user, pass, playlist, sourceKey)
+            return@withContext if (cachedSourceKey == sourceKey) cached else emptyList()
+        }
 
         if (hasUsableCache) {
             if (needsRefresh) refreshScope.launch {
@@ -187,7 +198,6 @@ object SportsChannelBridge {
     ) = withContext(Dispatchers.IO) {
         if (!indexing.compareAndSet(false, true)) return@withContext
         try {
-            // Another refresh may have completed while this coroutine was queued.
             if (cachedSourceKey == sourceKey && cached.isNotEmpty() && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) return@withContext
             var result = emptyList<SportsChannel>()
             if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
@@ -294,7 +304,7 @@ object SportsChannelBridge {
     private fun persist(context: Context, channels: List<SportsChannel>, sourceKey: String, savedAt: Long) {
         val array = JSONArray()
         channels.forEach { c -> array.put(JSONObject().apply { put("id", c.id); put("name", c.name); put("group", c.group); put("logo", c.logo ?: ""); put("url", c.url) }) }
-        val root = JSONObject().apply { put("version", 7); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
+        val root = JSONObject().apply { put("version", 8); put("savedAt", savedAt); put("sourceKey", sourceKey); put("channels", array) }
         val target = File(context.noBackupFilesDir, CACHE_FILE)
         val temp = File(context.noBackupFilesDir, "$CACHE_FILE.tmp")
         runCatching { temp.writeText(root.toString()); if (!temp.renameTo(target)) { target.delete(); temp.renameTo(target) } }
@@ -310,8 +320,10 @@ object SportsChannelBridge {
             when {
                 line.startsWith("#EXTINF", true) -> attrs = parseAttrs(line)
                 !line.startsWith("#") -> {
-                    val name = clean(attrs["name"]).ifBlank { line.substringAfterLast('/').substringBefore('?').ifBlank { "Channel" } }
-                    result += SportsChannel("${name.lowercase()}|$line".hashCode().toString(), name, clean(attrs["group"]).ifBlank { "Live TV" }, clean(attrs["logo"]).ifBlank { null }, line)
+                    val name = clean(attrs["name"]).ifBlank { clean(attrs["tvg-name"]) }.ifBlank { line.substringAfterLast('/').substringBefore('?').ifBlank { "Channel" } }
+                    val group = clean(attrs["group-title"]).ifBlank { clean(attrs["group"]) }.ifBlank { clean(attrs["category-name"]) }.ifBlank { "Live TV" }
+                    val logo = clean(attrs["tvg-logo"]).ifBlank { clean(attrs["logo"]) }.ifBlank { null }
+                    result += SportsChannel("${name.lowercase()}|$line".hashCode().toString(), name, group, logo, line)
                     attrs = emptyMap()
                 }
             }
