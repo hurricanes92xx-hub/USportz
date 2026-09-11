@@ -14,8 +14,8 @@ import java.time.ZoneOffset
 
 /**
  * Targeted TheSportsDB fallback for sports that ESPN does not cover well (especially wrestling).
- * Season schedules provide breadth; league-next is used as a safety net for WWE when the free
- * season endpoint is stale or temporarily incomplete.
+ * WWE uses the lightweight next-league feed first, then today's league feed, then the full season
+ * as a final fallback. This keeps the common path fast while making same-day shows reliable.
  */
 object DedicatedSchedule {
     private const val API = "https://www.thesportsdb.com/api/v1/json/123"
@@ -37,9 +37,16 @@ object DedicatedSchedule {
         coroutineScope {
             seasons.map { season ->
                 async(Dispatchers.IO) {
-                    val seasonEvents = fetchSeason(season, today, last)
-                    val fallback = if (season.nextLeagueId != null) fetchNextLeague(season, season.nextLeagueId, today, last) else emptyList()
-                    seasonEvents + fallback
+                    val primary = if (season.nextLeagueId != null) {
+                        fetchNextLeague(season, season.nextLeagueId, today, last)
+                    } else emptyList()
+                    val todayFallback = if (season.nextLeagueId != null && primary.none { isSameLocalDay(it.startTime, today) }) {
+                        fetchDay(season, today, today, last)
+                    } else emptyList()
+                    val seasonFallback = if (primary.isEmpty() && todayFallback.isEmpty()) {
+                        fetchSeason(season, today, last)
+                    } else emptyList()
+                    (primary + todayFallback + seasonFallback).distinctBy { canonical(it) }
                 }
             }.awaitAll().flatten().distinctBy { canonical(it) }
         }
@@ -55,13 +62,18 @@ object DedicatedSchedule {
         parseEvents(body, season, today, last)
     }.getOrDefault(emptyList())
 
+    private fun fetchDay(season: Season, day: LocalDate, today: LocalDate, last: LocalDate): List<SportsEvent> = runCatching {
+        val body = get("$API/eventsday.php?d=$day&l=${season.id}")
+        parseEvents(body, season, today, last)
+    }.getOrDefault(emptyList())
+
     private fun parseEvents(body: String, season: Season, today: LocalDate, last: LocalDate): List<SportsEvent> {
         if (body.isBlank()) return emptyList()
         val events = JSONObject(body).optJSONArray("events") ?: return emptyList()
         return buildList {
             for (i in 0 until events.length()) {
                 val e = events.optJSONObject(i) ?: continue
-                val timestamp = parseTimestamp(e.optString("strTimestamp"), e.optString("dateEvent"), e.optString("strTime"))
+                val timestamp = parseTimestamp(e.optString("strTimestamp"), e.optString("dateEventLocal").ifBlank { e.optString("dateEvent") }, e.optString("strTimeLocal").ifBlank { e.optString("strTime") })
                 if (timestamp.isBlank()) continue
                 val start = runCatching { Instant.parse(timestamp) }.getOrNull() ?: continue
                 val localDay = start.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
@@ -103,7 +115,7 @@ object DedicatedSchedule {
             connection.readTimeout = 8000
             connection.requestMethod = "GET"
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "USportz/1.5")
+            connection.setRequestProperty("User-Agent", "USPortz/1.5")
             if (connection.responseCode !in 200..299) return ""
             connection.inputStream.bufferedReader().use { it.readText() }
         } finally { connection.disconnect() }
@@ -136,6 +148,10 @@ object DedicatedSchedule {
             else -> "pre"
         }
     }
+
+    private fun isSameLocalDay(startTime: String, day: LocalDate): Boolean = runCatching {
+        Instant.parse(startTime).atZone(java.time.ZoneId.systemDefault()).toLocalDate() == day
+    }.getOrDefault(false)
 
     private fun canonical(event: SportsEvent): String = "${event.league}|${event.name}|${event.startTime.take(16)}".lowercase()
 
