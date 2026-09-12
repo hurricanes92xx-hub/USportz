@@ -61,10 +61,6 @@ class SourceStore(private val context: Context) {
                 return@launch
             }
 
-            // Fast path: categories are tiny compared with a provider's complete live
-            // catalogue. Pull only sports categories first and persist them immediately.
-            // The normal full index is then started in the background so the first screen
-            // is usable while the remaining catalogue continues to arrive.
             main.post { progress("Authenticated • finding sports categories…") }
             val sportsReady = runCatching {
                 FastXtreamSportsBootstrap.bootstrap(context, workingServer, cleanUser, cleanPass)
@@ -72,17 +68,16 @@ class SourceStore(private val context: Context) {
 
             if (sportsReady > 0) {
                 main.post { progress("Connected • $sportsReady sports channels ready • finishing catalog…") }
-                // This returns from the disk snapshot immediately and schedules the full
-                // refresh without blocking the source screen.
-                runCatching { SportsChannelBridge.load(context, forceRefresh = false) }
+                // The sports bootstrap has already populated the disk snapshot. Return to
+                // the app immediately, then let the complete catalogue refresh continue off
+                // the source screen without making the user wait for thousands of channels.
+                io.launch { runCatching { SportsChannelBridge.load(context, forceRefresh = true) } }
                 main.post { done(true, "Connected • $sportsReady sports channels ready") }
                 return@launch
             }
 
-            // Some providers have no meaningful sports categories. Start the broad
-            // streaming index in the background rather than making login wait for it.
             main.post { progress("Connected • indexing live channels in background…") }
-            runCatching { SportsChannelBridge.load(context, forceRefresh = false) }
+            io.launch { runCatching { SportsChannelBridge.load(context, forceRefresh = true) } }
             main.post { done(true, "Connected • live channels indexing in background") }
         }
     }
@@ -121,9 +116,6 @@ class SourceStore(private val context: Context) {
                 )
             }
             return runCatching { create() }.getOrElse {
-                // A stale/corrupt encrypted preference file must never crash the Sources screen.
-                // Remove only this app's encrypted store and recreate it; credentials are never
-                // downgraded to plaintext SharedPreferences.
                 context.deleteSharedPreferences(PREFS_NAME)
                 runCatching { create() }.getOrElse { failure ->
                     throw IllegalStateException("Secure credential storage unavailable", failure)
