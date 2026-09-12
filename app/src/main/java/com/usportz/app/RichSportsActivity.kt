@@ -69,9 +69,6 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
         if (force) refreshing = true else loading = true
         error = ""
         try {
-            // Load the IPTV snapshot and schedule once in parallel. The old implementation
-            // fetched the schedule twice when channels were present, which made refreshes
-            // needlessly expensive and could leave the UI waiting during poor connectivity.
             val (loadedChannels, loadedEvents) = coroutineScope {
                 val c = async(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
                 val e = async(Dispatchers.IO) { (SportsSchedule.load(true) + MonsterJamSchedule.load()).distinctBy { it.id } }
@@ -79,12 +76,18 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
             }
             channels = loadedChannels
             events = loadedEvents
+            if (loadedEvents.isNotEmpty()) withContext(Dispatchers.IO) { SportsScheduleDiskCache.write(activity, loadedEvents) }
         } catch (t: Throwable) {
             error = t.message?.takeIf { it.isNotBlank() } ?: "Unable to refresh sports data"
         } finally { loading = false; refreshing = false; now = System.currentTimeMillis() }
     }
 
     LaunchedEffect(Unit) {
+        // Restore the last good schedule immediately after a process restart. A network
+        // refresh still runs afterward, but a transient provider/API outage can no longer
+        // erase the Sports screen to zero games.
+        val saved = withContext(Dispatchers.IO) { SportsScheduleDiskCache.read(activity) }
+        if (saved.isNotEmpty()) { events = saved; loading = false; now = System.currentTimeMillis() }
         reload(false)
         while (true) { delay(30_000); reload(false) }
     }
@@ -146,8 +149,6 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 }
 
 @Composable private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsChannel>, now: Long, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, openEvent: (SportsEvent) -> Unit, favorites: MutableMap<String, Boolean>? = null) {
-    // Resolver work can scan a large Xtream catalog. Keep it off the Compose/UI thread;
-    // Android treats long composition work as an ANR risk.
     val ranked by produceState<List<SportsResolver.WatchSource>>(emptyList(), event.id, channels) {
         value = withContext(Dispatchers.Default) { SportsResolver.resolve(event, channels, 16) }
     }
@@ -157,7 +158,6 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
     val countdown = if (start != null && start > now) formatCountdown(start - now) else ""
     val isFavorite = favorites?.get(event.id) == true
     val monsterJam = isMonsterJamEvent(event)
-
     Card(Modifier.fillMaxWidth().clickable { openEvent(event) }, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
