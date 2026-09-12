@@ -69,15 +69,16 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
         if (force) refreshing = true else loading = true
         error = ""
         try {
+            // Load the IPTV snapshot and schedule once in parallel. The old implementation
+            // fetched the schedule twice when channels were present, which made refreshes
+            // needlessly expensive and could leave the UI waiting during poor connectivity.
             val (loadedChannels, loadedEvents) = coroutineScope {
                 val c = async(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
                 val e = async(Dispatchers.IO) { (SportsSchedule.load(true) + MonsterJamSchedule.load()).distinctBy { it.id } }
                 c.await() to e.await()
             }
             channels = loadedChannels
-            events = if (loadedChannels.isEmpty()) loadedEvents else withContext(Dispatchers.Default) {
-                SportsSchedule.load(true, loadedChannels)
-            }.ifEmpty { loadedEvents }
+            events = loadedEvents
         } catch (t: Throwable) {
             error = t.message?.takeIf { it.isNotBlank() } ?: "Unable to refresh sports data"
         } finally { loading = false; refreshing = false; now = System.currentTimeMillis() }
@@ -92,7 +93,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
     val visibleEvents = remember(events, selectedSport, bucket, now) {
         SportsSchedule.forSport(events, selectedSport)
             .filter { scheduleBucket(it, now) == bucket }
-            .sortedBy { eventEpoch(it) ?: Long.MAX_VALUE }
+            .sortedBy { eventEpoch(it.startTime) ?: Long.MAX_VALUE }
     }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Orange, secondary = Cyan, background = Ink, surface = Panel)) {
@@ -145,7 +146,11 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 }
 
 @Composable private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsChannel>, now: Long, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, openEvent: (SportsEvent) -> Unit, favorites: MutableMap<String, Boolean>? = null) {
-    val ranked = remember(event.id, channels) { SportsResolver.resolve(event, channels, 16) }
+    // Resolver work can scan a large Xtream catalog. Keep it off the Compose/UI thread;
+    // Android treats long composition work as an ANR risk.
+    val ranked by produceState<List<SportsResolver.WatchSource>>(emptyList(), event.id, channels) {
+        value = withContext(Dispatchers.Default) { SportsResolver.resolve(event, channels, 16) }
+    }
     val brand = SportsBranding.find(event.name, event.league)
     val leagueLogo = event.leagueLogo?.takeIf { it.isNotBlank() } ?: BrandAssets.logoUrl(brand)
     val start = eventEpoch(event.startTime)
@@ -168,7 +173,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
             }
             if (event.competitorLogos.any { it.isNotBlank() }) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) { event.competitorLogos.take(2).forEachIndexed { i, logo -> if (logo.isNotBlank()) AsyncImage(logo, event.competitors.getOrNull(i).orEmpty(), Modifier.size(32.dp), contentScale = ContentScale.Fit) }; Text(event.competitors.take(2).joinToString("  •  "), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (ranked.isEmpty()) "NO MATCH YET" else "${ranked.size} AVAILABLE SOURCES", color = if (ranked.isEmpty()) Color.Gray else Orange, fontSize = 10.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                Text(if (ranked.isEmpty()) "MATCHING SOURCES…" else "${ranked.size} AVAILABLE SOURCES", color = if (ranked.isEmpty()) Color.Gray else Orange, fontSize = 10.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
                 Text("TAP FOR SOURCES", color = Color(0xFF9DA5B7), fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(5.dp)); Icon(Icons.Default.ChevronRight, null, tint = Orange)
             }
@@ -179,7 +184,9 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 }
 
 @Composable private fun EventSourcesDialog(event: SportsEvent, channels: List<SportsChannel>, play: (SportsChannel) -> Unit, close: () -> Unit) {
-    val ranked = remember(event.id, channels) { SportsResolver.resolve(event, channels, 16) }
+    val ranked by produceState<List<SportsResolver.WatchSource>>(emptyList(), event.id, channels) {
+        value = withContext(Dispatchers.Default) { SportsResolver.resolve(event, channels, 16) }
+    }
     AlertDialog(onDismissRequest = close, containerColor = Panel2, title = { Column { Text(SportsPresentation.matchup(event), color = Color.White, fontWeight = FontWeight.Black); Text("${ranked.size} matched IPTV sources", color = Orange2, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) } }, text = {
         if (ranked.isEmpty()) Column { Text("GAME FOUND — NO CHANNEL MATCH", color = Orange2, fontWeight = FontWeight.Black); Text("No strong provider match was found yet. Try refreshing the sports source.", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
         else LazyColumn(Modifier.heightIn(max = 430.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { items(ranked, key = { "source-${it.channel.url}-${it.channel.name}" }) { match ->
