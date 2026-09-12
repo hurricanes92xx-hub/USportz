@@ -71,7 +71,10 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
         try {
             val (loadedChannels, loadedEvents) = coroutineScope {
                 val c = async(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
-                val e = async(Dispatchers.IO) { (SportsSchedule.load(true) + MonsterJamSchedule.load()).distinctBy { it.id } }
+                // Only force the schedule when the user explicitly refreshes. The normal
+                // 30-second loop uses its 2-minute cache and background enrichment instead
+                // of hammering 20+ schedule endpoints every tick.
+                val e = async(Dispatchers.IO) { (SportsSchedule.load(force) + MonsterJamSchedule.load()).distinctBy { it.id } }
                 c.await() to e.await()
             }
             channels = loadedChannels
@@ -83,9 +86,6 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
     }
 
     LaunchedEffect(Unit) {
-        // Restore the last good schedule immediately after a process restart. A network
-        // refresh still runs afterward, but a transient provider/API outage can no longer
-        // erase the Sports screen to zero games.
         val saved = withContext(Dispatchers.IO) { SportsScheduleDiskCache.read(activity) }
         if (saved.isNotEmpty()) { events = saved; loading = false; now = System.currentTimeMillis() }
         reload(false)
