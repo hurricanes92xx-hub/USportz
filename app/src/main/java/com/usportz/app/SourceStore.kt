@@ -60,14 +60,30 @@ class SourceStore(private val context: Context) {
                 main.post { done(false, "Could not save the encrypted source settings on this device") }
                 return@launch
             }
-            main.post { progress("Authenticated • loading live channels…") }
-            val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
-            val channels = result.getOrDefault(emptyList())
-            if (channels.isNotEmpty()) {
-                main.post { progress("Connected • ${channels.size} channels loaded"); done(true, "Connected • ${channels.size} channels loaded") }
-            } else {
-                main.post { done(false, "Login succeeded, but the provider returned no live channels") }
+
+            // Fast path: categories are tiny compared with a provider's complete live
+            // catalogue. Pull only sports categories first and persist them immediately.
+            // The normal full index is then started in the background so the first screen
+            // is usable while the remaining catalogue continues to arrive.
+            main.post { progress("Authenticated • finding sports categories…") }
+            val sportsReady = runCatching {
+                FastXtreamSportsBootstrap.bootstrap(context, workingServer, cleanUser, cleanPass)
+            }.getOrDefault(0)
+
+            if (sportsReady > 0) {
+                main.post { progress("Connected • $sportsReady sports channels ready • finishing catalog…") }
+                // This returns from the disk snapshot immediately and schedules the full
+                // refresh without blocking the source screen.
+                runCatching { SportsChannelBridge.load(context, forceRefresh = false) }
+                main.post { done(true, "Connected • $sportsReady sports channels ready") }
+                return@launch
             }
+
+            // Some providers have no meaningful sports categories. Start the broad
+            // streaming index in the background rather than making login wait for it.
+            main.post { progress("Connected • indexing live channels in background…") }
+            runCatching { SportsChannelBridge.load(context, forceRefresh = false) }
+            main.post { done(true, "Connected • live channels indexing in background") }
         }
     }
 
