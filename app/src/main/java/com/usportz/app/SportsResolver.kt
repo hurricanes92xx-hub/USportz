@@ -1,15 +1,15 @@
 package com.usportz.app
 
 /**
- * Event -> IPTV resolver. Understands normal networks plus the event-channel naming
- * patterns commonly used by sports IPTV playlists: NCAAF 01, NCAAB 12, NFL 03,
- * "TEAM A vs TEAM B - ESPN+", regional prefixes such as US/CA, and PPV/event feeds.
+ * Event -> IPTV resolver. Pairs provider event feeds (NCAAF 01, NCAAB 02, NFL 03,
+ * TEAM A vs TEAM B) ahead of generic network channels, while collapsing quality/region
+ * variants into one stream family.
  */
 object SportsResolver {
     data class WatchSource(val channel: SportsChannel, val score: Int, val reasons: List<String>)
 
     private val qualityWords = setOf("4k", "uhd", "fhd", "hd", "1080p", "720p", "576p", "sd", "2160p", "50fps", "60fps")
-    private val regionWords = setOf("east", "west", "central", "coast", "north", "south", "backup", "alt", "alternate", "feed", "us", "usa", "ca", "canada")
+    private val regionWords = setOf("east", "west", "central", "coast", "north", "south", "backup", "alt", "alternate", "feed", "us", "usa", "ca", "canada", "cl", "nl", "uk", "il", "it")
     private val noiseWords = setOf("news", "weather", "music", "kids", "movie", "movies", "entertainment")
 
     fun resolve(event: SportsEvent, channels: List<SportsChannel>, limit: Int = 8): List<WatchSource> {
@@ -32,31 +32,30 @@ object SportsResolver {
         val reasons = ArrayList<String>()
         var score = 0
 
-        // 1) Many IPTV providers create actual event channels, e.g. "NCAAF 48:
-        // UConn Vs UCF ... ESPN+". Recognize the sport/category token even when
-        // the channel has no normal network name.
         val labelMatch = channelLabelMatch(event, metadata)
         if (labelMatch != null) {
             score += labelMatch.first
             reasons += labelMatch.second
         }
 
-        // 2) Team matching is the strongest signal for event-specific channels.
+        // Event-feed pairing gets the strongest signal: both teams in the provider
+        // label means this is almost certainly the actual event feed, not ESPN/TSN.
         val teamAliases = event.competitors.flatMap(::teamAliases).distinct()
         val teamHits = teamAliases.count { alias -> alias.length >= 3 && tokenOrCompactMatch(metadata, alias) }
         val distinctTeams = event.competitors.count { team -> teamAliasesForOne(team).any { tokenOrCompactMatch(metadata, it) } }
-        if (distinctTeams >= 2) { score += 70; reasons += "both teams in EPG/channel metadata" }
-        else if (teamHits > 0) { score += 42; reasons += "team in EPG/channel metadata" }
+        if (distinctTeams >= 2) {
+            score += 70
+            reasons += "both teams in EPG/channel metadata"
+        } else if (teamHits > 0) {
+            score += 42
+            reasons += "team in EPG/channel metadata"
+        }
 
-        // 3) Prefer the event's explicit broadcast when the schedule provides it.
         val broadcasts = event.broadcast.split(Regex("[,/|•]+"))
             .map(::normalize).filter { it.isNotBlank() }
         val exact = broadcasts.firstOrNull { tokenMatch(metadata, it) }
         if (exact != null) { score += 38; reasons += "broadcast network" }
 
-        // 4) If the schedule has no broadcast, use league/sport broadcast intelligence.
-        // A primary network match is intentionally worth enough to surface ESPN/TSN/etc.
-        // for NCAA games whose feed omitted a broadcast field.
         val preferred = SportsBroadcasts.preferredNetworks(event).map(::normalize)
         val network = preferred.firstOrNull { tokenMatch(metadata, it) }
         if (network != null) {
@@ -80,10 +79,9 @@ object SportsResolver {
     }
 
     /**
-     * Recognizes the provider-side sports-event labels seen in real IPTV lists:
-     * NCAAF 01..50, NCAAB 01..57, NFL 01, NBA 01, NHL 01, CFL 01, PPV/event feeds,
-     * and variants such as "NCAAF: TEAM A AT TEAM B". Prefixes like US| and CA| are
-     * deliberately ignored as region metadata rather than treated as team names.
+     * Provider event-feed intelligence. Generic "NCAAF 01" feeds are useful, but a
+     * feed containing both scheduled teams is an exact pairing and is boosted above
+     * ESPN/TSN/generic NCAAF channels.
      */
     private fun channelLabelMatch(event: SportsEvent, metadata: String): Pair<Int, String>? {
         val normalizedLeague = normalize(event.league)
@@ -109,7 +107,6 @@ object SportsResolver {
         return if (explicitEvent) 34 to "sports event feed: $hit" else 30 to "sports event channel: $hit"
     }
 
-    /** Builds human-name, abbreviation and college-friendly aliases without requiring a database. */
     private fun teamAliases(team: String): List<String> {
         val n = normalize(team); if (n.isBlank()) return emptyList()
         val words = n.split(' ').filter { it.isNotBlank() }
@@ -141,7 +138,6 @@ object SportsResolver {
         }
     }
 
-    /** Collapse quality/region/feed suffixes so ESPN HD/FHD/1080P/East are one source family. */
     private fun streamFamily(channel: SportsChannel): String {
         val base = normalize(channel.tvgId.ifBlank { channel.tvgName.ifBlank { channel.name } })
         val words = base.split(' ').filter { it.isNotBlank() && it !in qualityWords && it !in regionWords }
