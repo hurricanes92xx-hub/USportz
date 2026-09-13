@@ -41,7 +41,9 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "uspo
                 db.insertWithOnConflict("channels", null, ContentValues().apply {
                     put("generation", generation); put("source_key", sourceKey); put("id", channel.id); put("name", channel.name); put("grp", channel.group); put("logo", channel.logo); put("url", channel.url)
                     put("tvg_name", channel.tvgName); put("tvg_id", channel.tvgId); put("category", channel.category); put("provider", channel.provider)
-                    put("is_sports", if (SportsNetworkCatalog.find(channel) != null) 1 else 0)
+                    // Keep both branded networks and provider-side event feeds such as
+                    // NCAAF 01 / NCAAF 02 / TEAM A vs TEAM B in the sports catalog.
+                    put("is_sports", if (SportsNetworkCatalog.isSportsChannel(channel)) 1 else 0)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
             db.setTransactionSuccessful()
