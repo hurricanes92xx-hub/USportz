@@ -55,7 +55,7 @@ object SportsNetworkCatalog {
     )
 
     fun find(channel: SportsChannel): SportsNetwork? {
-        val haystack = normalize("${channel.name} ${channel.group} ${channel.category}")
+        val haystack = normalize(listOf(channel.name, channel.tvgName, channel.tvgId, channel.group, channel.category, channel.provider).joinToString(" "))
         return networks.firstOrNull { network -> network.aliases.any { alias -> matchesAlias(haystack, normalize(alias)) } }
     }
 
