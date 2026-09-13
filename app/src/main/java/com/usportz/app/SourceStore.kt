@@ -45,12 +45,13 @@ class SourceStore(private val context: Context) {
             return
         }
         io.launch {
-            main.post { progress("Testing Xtream server…") }
+            main.post { progress("Connecting to Xtream…") }
             val workingServer = runCatching { SportsChannelBridge.authenticateXtream(normalizedServer, cleanUser, cleanPass) }.getOrNull()
             if (workingServer.isNullOrBlank()) {
                 main.post { done(false, "Xtream login failed — server, username or password was rejected") }
                 return@launch
             }
+
             runCatching {
                 server = workingServer
                 user = cleanUser
@@ -61,24 +62,16 @@ class SourceStore(private val context: Context) {
                 return@launch
             }
 
-            main.post { progress("Authenticated • finding sports categories…") }
-            val sportsReady = runCatching {
-                FastXtreamSportsBootstrap.bootstrap(context, workingServer, cleanUser, cleanPass)
-            }.getOrDefault(0)
-
-            if (sportsReady > 0) {
-                main.post { progress("Connected • $sportsReady sports channels ready • finishing catalog…") }
-                // The sports bootstrap has already populated the disk snapshot. Return to
-                // the app immediately, then let the complete catalogue refresh continue off
-                // the source screen without making the user wait for thousands of channels.
-                io.launch { runCatching { SportsChannelBridge.load(context, forceRefresh = true) } }
-                main.post { done(true, "Connected • $sportsReady sports channels ready") }
-                return@launch
+            // Do ONE full Xtream import.  Do not first download sports categories and then
+            // download get_live_streams again: that doubles bandwidth, creates extra JSON
+            // pressure and makes large providers look like they never connected.
+            // SportsChannelBridge streams the complete response directly into SQLite in
+            // bounded batches, so the phone never holds the entire IPTV list in RAM.
+            main.post { progress("Connected • importing all channels…") }
+            io.launch {
+                runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
             }
-
-            main.post { progress("Connected • indexing live channels in background…") }
-            io.launch { runCatching { SportsChannelBridge.load(context, forceRefresh = true) } }
-            main.post { done(true, "Connected • live channels indexing in background") }
+            main.post { done(true, "Connected • all channels are being indexed safely") }
         }
     }
 
