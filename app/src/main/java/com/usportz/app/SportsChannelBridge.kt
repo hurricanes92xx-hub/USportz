@@ -52,9 +52,6 @@ object SportsChannelBridge {
                 val body = runCatching { request("$base/$endpoint?$query", 7_000) }.getOrNull().orEmpty()
                 if (isAuthenticatedResponse(body)) return base
             }
-            // A number of real-world Xtream panels expose a working M3U endpoint while
-            // their player_api response is non-standard or disabled. Probe only the
-            // beginning of the playlist so login never downloads the whole catalog twice.
             if (probeM3u("$base/get.php?$query&type=m3u_plus&output=ts")) return base
         }
         return null
@@ -135,12 +132,14 @@ object SportsChannelBridge {
         val diskSnapshot = runCatching { store.activeSnapshot(sourceKey) }.getOrDefault(emptyList())
         if (diskSnapshot.isNotEmpty()) { cached = diskSnapshot; cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey }
         if (forceRefresh) {
-            var waited = 0L; while (indexing.get() && waited < 30_000L) { delay(100L); waited += 100L }
-            refreshInternal(context, server, user, pass, playlist, sourceKey)
-            val refreshed = store.activeSnapshot(sourceKey); if (refreshed.isNotEmpty()) { cached = refreshed; cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey }
-            return@withContext cached.takeIf { cachedSourceKey == sourceKey }.orEmpty()
+            // Never make the UI wait for a full IPTV catalog refresh. Keep the last good
+            // snapshot on screen and refresh it in the background; a failed refresh cannot
+            // erase working channels or make the Sports screen go blank.
+            if (!indexing.get()) refreshScope.launch { refreshInternal(context, server, user, pass, playlist, sourceKey) }
+            return@withContext if (cachedSourceKey == sourceKey) cached else diskSnapshot
         }
-        val age = System.currentTimeMillis() - cachedAt; val needsRefresh = diskSnapshot.isEmpty() || cachedSourceKey != sourceKey || age > CACHE_TTL_MS
+        val age = System.currentTimeMillis() - cachedAt
+        val needsRefresh = diskSnapshot.isEmpty() || cachedSourceKey != sourceKey || age > CACHE_TTL_MS
         if (needsRefresh) refreshScope.launch { refreshInternal(context, server, user, pass, playlist, sourceKey) }
         if (cachedSourceKey == sourceKey) cached else diskSnapshot
     }
@@ -149,13 +148,30 @@ object SportsChannelBridge {
         if (!indexing.compareAndSet(false, true)) return@withContext
         try {
             val store = SportsChannelDiskStore(context); var generation: Long? = null; var count = 0
-            fun accept(channel: SportsChannel) { if (generation == null) generation = store.beginGeneration(sourceKey); pending += channel; count++; if (pending.size >= BATCH_SIZE) flush(store, sourceKey, generation!!) }
+            fun accept(channel: SportsChannel) {
+                if (generation == null) generation = store.beginGeneration(sourceKey)
+                pending += channel; count++
+                if (pending.size >= BATCH_SIZE) flush(store, sourceKey, generation!!)
+            }
             pending.clear()
             if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
-                for (base in normalizedServerCandidates(server)) { val before = count; runCatching { fetchLiveStreamsStreaming(base, user, pass, ::accept) }; if (count > before) break }
-                if (count == 0) for (base in normalizedServerCandidates(server)) { val before = count; runCatching { fetchM3uStreaming("$base/get.php?${credentialsQuery(user, pass)}&type=m3u_plus&output=ts", ::accept) }; if (count > before) break }
+                for (base in normalizedServerCandidates(server)) {
+                    val before = count
+                    runCatching { fetchLiveStreamsStreaming(base, user, pass, ::accept) }
+                    if (count > before) break
+                }
+                if (count == 0) for (base in normalizedServerCandidates(server)) {
+                    val before = count
+                    runCatching { fetchM3uStreaming("$base/get.php?${credentialsQuery(user, pass)}&type=m3u_plus&output=ts", ::accept) }
+                    if (count > before) break
+                }
             } else if (playlist.isNotBlank()) runCatching { fetchM3uStreaming(playlist, ::accept) }
-            if (generation != null && count > 0) { flush(store, sourceKey, generation!!); store.activate(sourceKey, generation!!, count); cached = store.activeSnapshot(sourceKey); cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey }
+            if (generation != null && count > 0) {
+                flush(store, sourceKey, generation!!)
+                store.activate(sourceKey, generation!!, count)
+                val fresh = store.activeSnapshot(sourceKey)
+                if (fresh.isNotEmpty()) { cached = fresh; cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey }
+            }
         } finally { pending.clear(); indexing.set(false) }
     }
 
