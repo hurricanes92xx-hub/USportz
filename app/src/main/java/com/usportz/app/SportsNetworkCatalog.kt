@@ -1,6 +1,6 @@
 package com.usportz.app
 
-/** Curated US/Canada sports-TV network directory used by the Sports TV tab. */
+/** Curated US/Canada sports-TV network directory plus provider event-feed detection. */
 data class SportsNetwork(
     val key: String,
     val label: String,
@@ -16,7 +16,7 @@ object SportsNetworkCatalog {
         SportsNetwork("espn", "ESPN", listOf("espn", "espn hd", "espn us", "espn usa"), ESPN),
         SportsNetwork("espn2", "ESPN2", listOf("espn2", "espn 2", "espn2 hd", "espn 2 hd"), ESPN),
         SportsNetwork("espnu", "ESPNU", listOf("espnu", "espn u", "espnu hd"), ESPN),
-        SportsNetwork("espnews", "ESPNews", listOf("espnews", "espn news", "espnews hd"), ESPN),
+        SportsNetwork("espnews", "ESPNews", listOf("espnews", "espn news", "espnews hd", "espnnews", "espn news network"), ESPN),
         SportsNetwork("espndeportes", "ESPN Deportes", listOf("espn deportes", "espn deportes hd"), ESPN),
         SportsNetwork("espnplus", "ESPN+", listOf("espn+", "espn plus", "espnplus"), ESPN),
         SportsNetwork("accn", "ACC Network", listOf("acc network", "accn", "acc nx", "acc network hd", "accn hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/acc.png"),
@@ -29,13 +29,12 @@ object SportsNetworkCatalog {
         SportsNetwork("nbcsports", "NBC Sports", listOf("nbc sports", "nbc sports network", "nbc sports hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/nbc.png"),
         SportsNetwork("nbc", "NBC", listOf("nbc sports", "nbc", "nbc hd", "nbc network"), "https://upload.wikimedia.org/wikipedia/commons/3/3f/NBC_logo.svg"),
         SportsNetwork("usa", "USA Network", listOf("usa network", "usa", "usa hd", "usa network hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/usa.png"),
-        SportsNetwork("tntsports", "TNT Sports", listOf("tnt sports", "tnt", "tnt sports hd", "tnt hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/tnt.png"),
+        SportsNetwork("tntsports", "TNT Sports", listOf("tnt sports", "tnt sport", "tnt", "tnt sports hd", "tnt hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/tnt.png"),
         SportsNetwork("trutv", "truTV Sports", listOf("trutv", "tru tv", "trutv sports", "trutv hd"), "https://upload.wikimedia.org/wikipedia/commons/8/87/TruTV_2014_logo.svg"),
         SportsNetwork("tsn", "TSN", listOf("tsn", "tsn1", "tsn 1", "tsn2", "tsn 2", "tsn3", "tsn 3", "tsn4", "tsn 4", "tsn5", "tsn 5", "tsn direct", "tsn hd"), TSN),
-        SportsNetwork("sportsnet", "Sportsnet", listOf("sportsnet", "sn1", "sn 1", "sn west", "sn pacific", "sn ontario", "sn east", "sportsnet hd"), "https://upload.wikimedia.org/wikipedia/commons/7/7f/Sportsnet_2011_logo.svg"),
-        SportsNetwork("sportsnetone", "Sportsnet ONE", listOf("sportsnet one", "sn one", "sportsnet one hd"), "https://upload.wikimedia.org/wikipedia/commons/7/7f/Sportsnet_2011_logo.svg"),
-        SportsNetwork("sportsnet360", "Sportsnet 360", listOf("sportsnet 360", "sn 360", "sportsnet 360 hd"), "https://upload.wikimedia.org/wikipedia/commons/7/7f/Sportsnet_2011_logo.svg"),
-        SportsNetwork("rds", "RDS", listOf("rds", "rds2", "rds 2", "rds info", "rds hd"), "https://upload.wikimedia.org/wikipedia/commons/5/5f/R%C3%A9seau_des_sports_logo.svg"),
+        SportsNetwork("sportsnet", "Sportsnet", listOf("sportsnet", "sn1", "sn 1", "sn west", "sn pacific", "sn ontario", "sn east", "sportsnet hd", "sportsnet one", "sportsnet 360", "sn 360"), "https://upload.wikimedia.org/wikipedia/commons/7/7f/Sportsnet_2011_logo.svg"),
+        SportsNetwork("rds", "RDS", listOf("rds", "rds2", "rds 2", "rds info", "rds hd", "rds sports"), "https://upload.wikimedia.org/wikipedia/commons/5/5f/R%C3%A9seau_des_sports_logo.svg"),
+        SportsNetwork("tvasports", "TVA Sports", listOf("tva sports", "tva sport", "tvasports"), "https://upload.wikimedia.org/wikipedia/commons/6/63/TVA_Sports_logo.svg"),
         SportsNetwork("cfl", "CFL+", listOf("cfl+", "cfl plus", "cfl plus hd"), "https://upload.wikimedia.org/wikipedia/en/5/5b/Canadian_Football_League_logo.svg"),
         SportsNetwork("mlbnetwork", "MLB Network", listOf("mlb network", "mlb net", "mlb network hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png"),
         SportsNetwork("nflnetwork", "NFL Network", listOf("nfl network", "nfl net", "nfl network hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png"),
@@ -47,13 +46,24 @@ object SportsNetworkCatalog {
         SportsNetwork("msg", "MSG Network", listOf("msg network", "msg network hd", "msg"), "https://upload.wikimedia.org/wikipedia/commons/1/10/MSG_Network_logo.svg"),
         SportsNetwork("sny", "SNY", listOf("sny", "sny hd", "sportsnet new york"), "https://upload.wikimedia.org/wikipedia/commons/0/0f/SNY_logo.svg"),
         SportsNetwork("root", "ROOT Sports", listOf("root sports", "root sports hd", "root"), "https://upload.wikimedia.org/wikipedia/commons/1/13/Root_Sports_logo.svg"),
-        SportsNetwork("fanduel", "FanDuel Sports Network", listOf("fanduel sports network", "fanduel sports", "fanduel sports hd", "diamond sports"), "https://upload.wikimedia.org/wikipedia/commons/6/6d/FanDuel_logo.svg"),
-        SportsNetwork("thebigten", "Big Ten Network", listOf("btn", "big ten network"), "https://a.espncdn.com/i/teamlogos/leagues/500/btn.png")
+        SportsNetwork("fanduel", "FanDuel Sports Network", listOf("fanduel sports network", "fanduel sports", "fanduel sports hd", "diamond sports"), "https://upload.wikimedia.org/wikipedia/commons/6/6d/FanDuel_logo.svg")
+    )
+
+    private val eventFeedWords = listOf(
+        "ncaaf", "ncaab", "ncaaw", "ncaa", "college football", "college basketball", "college baseball", "college hockey",
+        "nfl ", "nba ", "nhl ", "mlb ", "cfl ", "ufc ", "wwe ", "aew ", " ppv", "events-only", "event 01", "event 02", "event 03", "event 04", "feed"
     )
 
     fun find(channel: SportsChannel): SportsNetwork? {
-        val haystack = normalize("${channel.name} ${channel.group}")
+        val haystack = normalize("${channel.name} ${channel.group} ${channel.category}")
         return networks.firstOrNull { network -> network.aliases.any { alias -> matchesAlias(haystack, normalize(alias)) } }
+    }
+
+    /** True for branded US/Canada networks AND provider-created sports event feeds. */
+    fun isSportsChannel(channel: SportsChannel): Boolean {
+        if (find(channel) != null) return true
+        val metadata = normalize(listOf(channel.name, channel.tvgName, channel.tvgId, channel.group, channel.category, channel.provider).joinToString(" "))
+        return eventFeedWords.any { metadata.contains(normalize(it)) }
     }
 
     fun sportsChannels(channels: List<SportsChannel>): List<Pair<SportsChannel, SportsNetwork>> = channels.asSequence()
