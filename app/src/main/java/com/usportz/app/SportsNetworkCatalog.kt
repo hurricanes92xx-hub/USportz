@@ -1,16 +1,12 @@
 package com.usportz.app
 
 /** Curated US/Canada sports-TV network directory plus provider event-feed detection. */
-data class SportsNetwork(
-    val key: String,
-    val label: String,
-    val aliases: List<String>,
-    val logoUrl: String
-)
+data class SportsNetwork(val key: String, val label: String, val aliases: List<String>, val logoUrl: String)
 
 object SportsNetworkCatalog {
     private const val ESPN = "https://a.espncdn.com/i/teamlogos/leagues/500/espn.png"
     private const val TSN = "https://upload.wikimedia.org/wikipedia/commons/3/3a/TSN_%282014%29_logo.svg"
+    private val EVENT_FEEDS = SportsNetwork("eventfeeds", "Sports Event Feeds", listOf(), "https://a.espncdn.com/i/teamlogos/leagues/500/espn.png")
 
     val networks: List<SportsNetwork> = listOf(
         SportsNetwork("espn", "ESPN", listOf("espn", "espn hd", "espn us", "espn usa"), ESPN),
@@ -49,26 +45,23 @@ object SportsNetworkCatalog {
         SportsNetwork("fanduel", "FanDuel Sports Network", listOf("fanduel sports network", "fanduel sports", "fanduel sports hd", "diamond sports"), "https://upload.wikimedia.org/wikipedia/commons/6/6d/FanDuel_logo.svg")
     )
 
-    private val eventFeedWords = listOf(
-        "ncaaf", "ncaab", "ncaaw", "ncaa", "college football", "college basketball", "college baseball", "college hockey",
-        "nfl ", "nba ", "nhl ", "mlb ", "cfl ", "ufc ", "wwe ", "aew ", " ppv", "events-only", "event 01", "event 02", "event 03", "event 04", "feed"
-    )
+    private val eventFeedWords = listOf("ncaaf", "ncaab", "ncaaw", "ncaa", "college football", "college basketball", "college baseball", "college hockey", "nfl ", "nba ", "nhl ", "mlb ", "cfl ", "ufc ", "wwe ", "aew ", " ppv", "events-only", "event 01", "event 02", "event 03", "event 04", "feed")
 
     fun find(channel: SportsChannel): SportsNetwork? {
-        val haystack = normalize("${channel.name} ${channel.group} ${channel.category}")
+        val haystack = normalize(listOf(channel.name, channel.tvgName, channel.tvgId, channel.group, channel.category, channel.provider).joinToString(" "))
         return networks.firstOrNull { network -> network.aliases.any { alias -> matchesAlias(haystack, normalize(alias)) } }
     }
 
-    /** True for branded US/Canada networks AND provider-created sports event feeds. */
     fun isSportsChannel(channel: SportsChannel): Boolean {
         if (find(channel) != null) return true
         val metadata = normalize(listOf(channel.name, channel.tvgName, channel.tvgId, channel.group, channel.category, channel.provider).joinToString(" "))
         return eventFeedWords.any { metadata.contains(normalize(it)) }
     }
 
+    /** Uses the exact same rich classifier as SQLite; event-feed streams get their own bucket. */
     fun sportsChannels(channels: List<SportsChannel>): List<Pair<SportsChannel, SportsNetwork>> = channels.asSequence()
-        .mapNotNull { channel -> find(channel)?.let { channel to it } }
-        .distinctBy { "${it.second.key}|${normalize(it.first.name)}|${it.first.url}" }
+        .mapNotNull { channel -> if (!isSportsChannel(channel)) null else channel to (find(channel) ?: EVENT_FEEDS) }
+        .distinctBy { "${it.first.id}|${it.first.url}" }
         .sortedWith(compareBy({ it.second.label }, { it.first.name.lowercase() }))
         .toList()
 
