@@ -40,9 +40,9 @@ object SportsSchedule {
     private const val CACHE_TTL_MS = 2 * 60 * 1000L
     private const val LOOKAHEAD_DAYS = 7L
     private const val HTTP_CONNECT_MS = 2500
-    private const val HTTP_READ_MS = 4500
-    private const val CRITICAL_TIMEOUT_MS = 5500L
-    private const val DEDICATED_TIMEOUT_MS = 2500L
+    private const val HTTP_READ_MS = 5000
+    private const val CRITICAL_TIMEOUT_MS = 7500L
+    private const val DEDICATED_TIMEOUT_MS = 3000L
     private val feedDispatcher = Dispatchers.IO.limitedParallelism(6)
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val backgroundRunning = AtomicBoolean(false)
@@ -55,36 +55,48 @@ object SportsSchedule {
         Feed("baseball", "mlb"),
         Feed("football", "college-football"),
         Feed("football", "nfl"),
+        Feed("football", "cfl"),
+        Feed("football", "ufl"),
         Feed("soccer", "usa.1"),
+        Feed("soccer", "usa.nwsl"),
+        Feed("soccer", "usa.usl.1"),
+        Feed("soccer", "usa.usl.l1"),
+        Feed("soccer", "usa.ncaa.m.1"),
+        Feed("soccer", "usa.ncaa.w.1"),
         Feed("soccer", "eng.1"),
         Feed("soccer", "esp.1"),
         Feed("soccer", "ger.1"),
         Feed("soccer", "ita.1"),
         Feed("soccer", "uefa.champions"),
         Feed("soccer", "uefa.europa"),
+        Feed("soccer", "conmebol.libertadores"),
+        Feed("soccer", "conmebol.sudamericana"),
+        Feed("soccer", "can.w.nsl"),
         Feed("hockey", "nhl"),
+        Feed("hockey", "mens-college-hockey"),
+        Feed("hockey", "womens-college-hockey"),
         Feed("basketball", "nba"),
         Feed("basketball", "wnba"),
+        Feed("basketball", "fiba"),
         Feed("basketball", "mens-college-basketball"),
         Feed("basketball", "womens-college-basketball"),
+        Feed("baseball", "college-baseball"),
         Feed("tennis", "atp"),
         Feed("tennis", "wta"),
         Feed("golf", "pga"),
+        Feed("golf", "lpga"),
+        Feed("golf", "liv"),
         Feed("racing", "f1"),
-        Feed("racing", "nascar-premier")
-    )
+        Feed("racing", "nascar-premier"),
+        Feed("mma", "ufc"),
+        Feed("boxing", "boxing")
+    ).distinct()
 
     private val feeds = listOf(
         *criticalFeeds.toTypedArray(),
-        Feed("football", "cfl"), Feed("football", "ufl"),
-        Feed("basketball", "fiba"),
-        Feed("baseball", "college-baseball"),
-        Feed("hockey", "mens-college-hockey"), Feed("hockey", "womens-college-hockey"),
-        Feed("soccer", "usa.nwsl"), Feed("soccer", "usa.usl.1"), Feed("soccer", "usa.usl.l1"), Feed("soccer", "usa.ncaa.m.1"), Feed("soccer", "usa.ncaa.w.1"),
         Feed("soccer", "eng.2"), Feed("soccer", "fra.1"), Feed("soccer", "ned.1"), Feed("soccer", "por.1"), Feed("soccer", "sco.1"),
-        Feed("soccer", "mex.1"), Feed("soccer", "mex.2"), Feed("soccer", "can.w.nsl"), Feed("soccer", "conmebol.libertadores"), Feed("soccer", "conmebol.sudamericana"), Feed("soccer", "fifa.world"), Feed("soccer", "fifa.wwc"), Feed("soccer", "fifa.world.u20"),
-        Feed("mma", "ufc"), Feed("boxing", "boxing"),
-        Feed("golf", "lpga"), Feed("golf", "eur"), Feed("golf", "liv"), Feed("golf", "champions-tour"), Feed("golf", "ntw"),
+        Feed("soccer", "mex.1"), Feed("soccer", "mex.2"), Feed("soccer", "conmebol.sudamericana"), Feed("soccer", "fifa.world"), Feed("soccer", "fifa.wwc"), Feed("soccer", "fifa.world.u20"),
+        Feed("golf", "eur"), Feed("golf", "champions-tour"), Feed("golf", "ntw"),
         Feed("racing", "irl"), Feed("racing", "nascar-secondary"), Feed("racing", "nascar-truck")
     ).distinct()
 
@@ -103,12 +115,9 @@ object SportsSchedule {
 
         if (!forceRefresh && cached.isNotEmpty() && cachedDay == todayKey && now - cachedAt < CACHE_TTL_MS) {
             launchBackgroundRefresh(today, last)
-            return@withContext prioritizeSourceMatches(
-                cached.map { refreshLiveState(it, now) }, source
-            )
+            return@withContext prioritizeSourceMatches(cached.map { refreshLiveState(it, now) }, source)
         }
 
-        // Critical live pass. It is deliberately independent of the broad feed set.
         val fast = coroutineScope {
             val official = async {
                 withTimeoutOrNull(CRITICAL_TIMEOUT_MS) {
@@ -220,11 +229,12 @@ object SportsSchedule {
         } else {
             listOf("$base?dates=$range&limit=500", "$base?dates=$date&limit=500")
         }
+        val collected = ArrayList<SportsEvent>()
         for (url in urls.distinct()) {
             val events = fetchJson(url, feed)
-            if (events.isNotEmpty()) return events
+            if (events.isNotEmpty()) collected += events
         }
-        return emptyList()
+        return dedupeBest(collected)
     }
 
     private fun fetchJson(url: String, feed: Feed): List<SportsEvent> = runCatching {
