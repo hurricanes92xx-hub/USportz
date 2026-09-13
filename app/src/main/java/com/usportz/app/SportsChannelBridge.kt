@@ -132,9 +132,6 @@ object SportsChannelBridge {
         val diskSnapshot = runCatching { store.activeSnapshot(sourceKey) }.getOrDefault(emptyList())
         if (diskSnapshot.isNotEmpty()) { cached = diskSnapshot; cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey }
         if (forceRefresh) {
-            // Never make the UI wait for a full IPTV catalog refresh. Keep the last good
-            // snapshot on screen and refresh it in the background; a failed refresh cannot
-            // erase working channels or make the Sports screen go blank.
             if (!indexing.get()) refreshScope.launch { refreshInternal(context, server, user, pass, playlist, sourceKey) }
             return@withContext if (cachedSourceKey == sourceKey) cached else diskSnapshot
         }
@@ -157,7 +154,8 @@ object SportsChannelBridge {
             if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
                 for (base in normalizedServerCandidates(server)) {
                     val before = count
-                    runCatching { fetchLiveStreamsStreaming(base, user, pass, ::accept) }
+                    val categories = runCatching { fetchLiveCategories(base, user, pass) }.getOrDefault(emptyMap())
+                    runCatching { fetchLiveStreamsStreaming(base, user, pass, categories, ::accept) }
                     if (count > before) break
                 }
                 if (count == 0) for (base in normalizedServerCandidates(server)) {
@@ -178,7 +176,48 @@ object SportsChannelBridge {
     private val pending = ArrayList<SportsChannel>(BATCH_SIZE)
     private fun flush(store: SportsChannelDiskStore, sourceKey: String, generation: Long) { if (pending.isNotEmpty()) { store.insertBatch(sourceKey, generation, pending.toList()); pending.clear() } }
 
-    private fun fetchLiveStreamsStreaming(base: String, user: String, pass: String, sink: (SportsChannel) -> Unit): Int {
+    private fun fetchLiveCategories(base: String, user: String, pass: String): Map<String, String> {
+        val query = "${credentialsQuery(user, pass)}&action=get_live_categories"
+        for (endpoint in listOf("player_api.php", "panel_api.php")) {
+            val conn = runCatching { URL("$base/$endpoint?$query").openConnection() as HttpURLConnection }.getOrNull() ?: continue
+            try {
+                conn.connectTimeout = 4_500; conn.readTimeout = 12_000; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"
+                conn.setRequestProperty("Accept", "application/json, text/plain, */*"); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USPortz/1.9")
+                if (conn.responseCode !in 200..299) continue
+                val text = openDecoded(conn).bufferedReader().use { it.readText().take(2 * 1024 * 1024) }
+                return parseCategoryNames(text)
+            } finally { conn.disconnect() }
+        }
+        return emptyMap()
+    }
+
+    private fun parseCategoryNames(text: String): Map<String, String> {
+        val out = HashMap<String, String>()
+        runCatching {
+            val root = text.trim()
+            if (root.startsWith("[")) {
+                val array = org.json.JSONArray(root)
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val id = item.optString("category_id").ifBlank { item.optString("id") }
+                    val name = item.optString("category_name").ifBlank { item.optString("name") }
+                    if (id.isNotBlank() && name.isNotBlank()) out[id] = name
+                }
+            } else {
+                val rootObject = JSONObject(root)
+                val array = rootObject.optJSONArray("categories") ?: rootObject.optJSONArray("data") ?: return@runCatching
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val id = item.optString("category_id").ifBlank { item.optString("id") }
+                    val name = item.optString("category_name").ifBlank { item.optString("name") }
+                    if (id.isNotBlank() && name.isNotBlank()) out[id] = name
+                }
+            }
+        }
+        return out
+    }
+
+    private fun fetchLiveStreamsStreaming(base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int {
         val query = "${credentialsQuery(user, pass)}&action=get_live_streams"
         for (endpoint in listOf("player_api.php", "panel_api.php")) {
             val conn = runCatching { URL("$base/$endpoint?$query").openConnection() as HttpURLConnection }.getOrNull() ?: continue
@@ -186,29 +225,29 @@ object SportsChannelBridge {
                 conn.connectTimeout = 4_500; conn.readTimeout = 60_000; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"
                 conn.setRequestProperty("Accept", "application/json, text/plain, */*"); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USPortz/1.9")
                 if (conn.responseCode !in 200..299) continue
-                val parsed = streamJson(openDecoded(conn), base, user, pass, sink); if (parsed > 0) return parsed
+                val parsed = streamJson(openDecoded(conn), base, user, pass, categories, sink); if (parsed > 0) return parsed
             } finally { conn.disconnect() }
         }
         return 0
     }
 
-    private fun streamJson(input: InputStream, base: String, user: String, pass: String, sink: (SportsChannel) -> Unit): Int = input.use { stream ->
+    private fun streamJson(input: InputStream, base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int = input.use { stream ->
         JsonReader(InputStreamReader(stream)).use { reader ->
             when (reader.peek()) {
-                JsonToken.BEGIN_ARRAY -> readStreamArray(reader, base, user, pass, sink)
-                JsonToken.BEGIN_OBJECT -> { var count = 0; reader.beginObject(); while (reader.hasNext()) { val key = reader.nextName(); if (key.equals("live_streams", true) || key.equals("streams", true) || key.equals("channels", true) || key.equals("data", true)) { if (reader.peek() == JsonToken.BEGIN_ARRAY) count += readStreamArray(reader, base, user, pass, sink) else reader.skipValue() } else reader.skipValue() }; reader.endObject(); count }
+                JsonToken.BEGIN_ARRAY -> readStreamArray(reader, base, user, pass, categories, sink)
+                JsonToken.BEGIN_OBJECT -> { var count = 0; reader.beginObject(); while (reader.hasNext()) { val key = reader.nextName(); if (key.equals("live_streams", true) || key.equals("streams", true) || key.equals("channels", true) || key.equals("data", true)) { if (reader.peek() == JsonToken.BEGIN_ARRAY) count += readStreamArray(reader, base, user, pass, categories, sink) else reader.skipValue() } else reader.skipValue() }; reader.endObject(); count }
                 else -> 0
             }
         }
     }
 
-    private fun readStreamArray(reader: JsonReader, base: String, user: String, pass: String, sink: (SportsChannel) -> Unit): Int {
-        var count = 0; reader.beginArray(); while (reader.hasNext()) { val channel = readStreamObject(reader, base, user, pass); if (channel != null) { sink(channel); count++ } }; reader.endArray(); return count
+    private fun readStreamArray(reader: JsonReader, base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int {
+        var count = 0; reader.beginArray(); while (reader.hasNext()) { val channel = readStreamObject(reader, base, user, pass, categories); if (channel != null) { sink(channel); count++ } }; reader.endArray(); return count
     }
 
-    private fun readStreamObject(reader: JsonReader, base: String, user: String, pass: String): SportsChannel? {
+    private fun readStreamObject(reader: JsonReader, base: String, user: String, pass: String, categories: Map<String, String>): SportsChannel? {
         if (reader.peek() != JsonToken.BEGIN_OBJECT) { reader.skipValue(); return null }
-        var id = ""; var name = ""; var group = "Live TV"; var logo: String? = null; var ext = "m3u8"; var direct = ""; var tvgId = ""; var tvgName = ""; var provider = "Xtream"
+        var id = ""; var name = ""; var group = "Live TV"; var logo: String? = null; var ext = "m3u8"; var direct = ""; var tvgId = ""; var tvgName = ""; var provider = "Xtream"; var categoryId = ""
         reader.beginObject()
         while (reader.hasNext()) when (reader.nextName().lowercase()) {
             "stream_id", "id" -> id = nextString(reader)
@@ -216,7 +255,7 @@ object SportsChannelBridge {
             "tvg_name", "tvg-name", "epg_channel_name" -> tvgName = nextString(reader)
             "epg_channel_id", "tvg_id", "tvg-id" -> tvgId = nextString(reader)
             "category_name", "category" -> group = nextString(reader).ifBlank { "Live TV" }
-            "category_id" -> { val v = nextString(reader); if (v.isNotBlank()) provider = "Xtream • Category $v" }
+            "category_id" -> categoryId = nextString(reader)
             "provider", "provider_name" -> provider = nextString(reader).ifBlank { provider }
             "stream_icon", "icon", "logo" -> logo = nextString(reader).ifBlank { null }
             "container_extension" -> ext = nextString(reader).ifBlank { "m3u8" }
@@ -224,8 +263,11 @@ object SportsChannelBridge {
             else -> reader.skipValue()
         }
         reader.endObject(); if (id.isBlank()) return null
+        val resolvedCategory = categories[categoryId].orEmpty().trim()
+        if (group.equals("Live TV", true) && resolvedCategory.isNotBlank()) group = resolvedCategory
+        val finalProvider = provider.ifBlank { "Xtream" }
         val displayName = name.ifBlank { tvgName }.ifBlank { "Channel" }; val url = direct.ifBlank { "$base/live/$user/$pass/$id.$ext" }
-        return SportsChannel(id, displayName, group, logo, url, tvgName.ifBlank { displayName }, tvgId, group, provider)
+        return SportsChannel(id, displayName, group, logo, url, tvgName.ifBlank { displayName }, tvgId, group, finalProvider)
     }
 
     private fun nextString(reader: JsonReader): String = when (reader.peek()) { JsonToken.NULL -> { reader.nextNull(); "" }; else -> runCatching { reader.nextString() }.getOrElse { reader.skipValue(); "" } }
