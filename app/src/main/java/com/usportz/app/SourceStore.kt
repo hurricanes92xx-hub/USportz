@@ -7,6 +7,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Secure local source settings. Credentials are encrypted at rest and never logged. */
@@ -62,16 +63,39 @@ class SourceStore(private val context: Context) {
                 return@launch
             }
 
-            // Do ONE full Xtream import.  Do not first download sports categories and then
-            // download get_live_streams again: that doubles bandwidth, creates extra JSON
-            // pressure and makes large providers look like they never connected.
-            // SportsChannelBridge streams the complete response directly into SQLite in
-            // bounded batches, so the phone never holds the entire IPTV list in RAM.
+            // Tuvora-style flow: authenticate once, stream the complete provider catalogue
+            // into the local database in bounded batches, then expose the completed snapshot.
+            // Do not fetch a sports-only subset first and do not keep thousands of channel
+            // objects in memory. The Sports screen reads only the indexed sports projection.
             main.post { progress("Connected • importing all channels…") }
-            io.launch {
-                runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
+            runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
+
+            // forceRefresh intentionally starts the disk import without blocking. Wait here
+            // using cheap SQLite-backed reads so the login screen does not report success while
+            // the dashboard still sees an empty catalogue. No IPTV request is made by this loop.
+            var waitedMs = 0L
+            var lastProgress = 0L
+            var indexedSports = emptyList<SportsChannel>()
+            while (waitedMs < 180_000L) {
+                delay(1_000L)
+                waitedMs += 1_000L
+                indexedSports = runCatching { SportsChannelBridge.load(context, forceRefresh = false) }.getOrDefault(emptyList())
+                if (indexedSports.isNotEmpty()) break
+                if (waitedMs - lastProgress >= 5_000L) {
+                    lastProgress = waitedMs
+                    val seconds = waitedMs / 1_000L
+                    main.post { progress("Connected • importing all channels… ${seconds}s") }
+                }
             }
-            main.post { done(true, "Connected • all channels are being indexed safely") }
+
+            if (indexedSports.isNotEmpty()) {
+                main.post { done(true, "Connected • ${indexedSports.size} sports channels indexed from full catalogue") }
+            } else {
+                // Authentication succeeded even if this provider is unusually slow or has no
+                // channels classified as sports. Keep the credentials and let the normal app
+                // refresh continue rather than falsely telling the user that login failed.
+                main.post { done(true, "Connected • full channel import is still finishing in background") }
+            }
         }
     }
 
