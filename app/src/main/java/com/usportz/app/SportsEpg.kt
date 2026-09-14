@@ -32,7 +32,6 @@ data class EpgProgram(
 }
 
 data class EpgNowNext(val channelId: String, val now: EpgProgram?, val next: EpgProgram?)
-
 data class EpgMatch(val program: EpgProgram, val score: Int, val reasons: List<String>)
 
 object SportsEpg {
@@ -73,14 +72,14 @@ object SportsEpg {
 
     fun nowNext(channel: SportsChannel, atMs: Long = System.currentTimeMillis()): EpgNowNext {
         val ids = normalizedIds(channel)
-        val relevant = synchronized(lock) { programs.filter { normalize(it.channelId) in ids } }
+        val relevant = synchronized(lock) { programs.filter { normalizeId(it.channelId) in ids } }
         return EpgNowNext(channel.tvgId.ifBlank { channel.id }, relevant.filter { it.isNow(atMs) }.maxByOrNull { it.startMs }, relevant.filter { it.isNext(atMs) }.minByOrNull { it.startMs })
     }
 
     fun eventMatches(event: SportsEvent, channel: SportsChannel, limit: Int = 5): List<EpgMatch> {
         val now = System.currentTimeMillis()
         val ids = normalizedIds(channel)
-        val candidates = synchronized(lock) { programs.filter { normalize(it.channelId) in ids && it.endMs >= now - 30 * 60 * 1000L && it.startMs <= now + 7 * 24 * 60 * 60 * 1000L } }
+        val candidates = synchronized(lock) { programs.filter { normalizeId(it.channelId) in ids && it.endMs >= now - 30 * 60 * 1000L && it.startMs <= now + 7 * 24 * 60 * 60 * 1000L } }
         val teamTerms = event.competitors.map(::normalize).filter { it.length >= 3 }
         val league = normalize(event.league)
         val broadcast = normalize(event.broadcast)
@@ -92,7 +91,7 @@ object SportsEpg {
             if (teams > 0) { score += teams * 35; reasons += "$teams team match" }
             if (league.isNotBlank() && (league in text || normalize(event.sport) in text)) { score += 22; reasons += "league/sport" }
             if (broadcast.isNotBlank() && broadcast in text) { score += 25; reasons += "broadcaster" }
-            if (p.isNow(now)) { score += 18; reasons += "now" } else if (p.startMs > now) { score += 8 }
+            if (p.isNow(now)) { score += 18; reasons += "now" } else if (p.startMs > now) score += 8
             EpgMatch(p, score, reasons)
         }.filter { it.score >= 20 }.sortedByDescending { it.score }.take(limit.coerceIn(1, 16))
     }
@@ -101,7 +100,7 @@ object SportsEpg {
         val needle = normalize(broadcaster)
         if (needle.isBlank()) return emptyList()
         val ids = normalizedIds(channel)
-        return synchronized(lock) { programs.filter { normalize(it.channelId) in ids && (needle in normalize(it.title) || needle in normalize(it.description) || needle in normalize(it.category)) }.sortedBy { it.startMs }.take(limit) }
+        return synchronized(lock) { programs.filter { normalizeId(it.channelId) in ids && (needle in normalize(it.title) || needle in normalize(it.description) || needle in normalize(it.category)) }.sortedBy { it.startMs }.take(limit) }
     }
 
     fun isStale(): Boolean = synchronized(lock) { programs.isEmpty() || System.currentTimeMillis() - cachedAt >= CACHE_TTL_MS }
@@ -164,12 +163,12 @@ object SportsEpg {
     private fun visibleFirst(all: List<EpgProgram>, visible: List<SportsChannel>): List<EpgProgram> {
         if (visible.isEmpty()) return all.sortedBy { it.startMs }.take(MAX_PROGRAMS)
         val priority = visible.take(MAX_VISIBLE_CHANNELS).flatMap(::normalizedIds).toSet()
-        return all.sortedWith(compareBy<EpgProgram> { if (normalize(it.channelId) in priority) 0 else 1 }.thenBy { it.startMs }).take(MAX_PROGRAMS)
+        return all.sortedWith(compareBy<EpgProgram> { if (normalizeId(it.channelId) in priority) 0 else 1 }.thenBy { it.startMs }).take(MAX_PROGRAMS)
     }
 
-    private fun normalizedIds(channel: SportsChannel): Set<String> = setOf(channel.tvgId, channel.tvgName, channel.name, channel.id).map(::normalize).filter { it.isNotBlank() }.toSet()
+    private fun normalizedIds(channel: SportsChannel): Set<String> = setOf(channel.tvgId, channel.tvgName, channel.name, channel.id).map(::normalizeId).filter { it.isNotBlank() }.toSet()
     private fun normalizeId(value: String): String = normalize(value).replace(" ", "-")
-    private fun normalize(value: String): String = value.lowercase(Locale.US).replace("&", " and ").replace(Regex("[^a-z0-9]+"), " ").trim()
+    private fun normalize(value: String): String = value.lowercase(Locale.US).replace("&", " and ").replace(Regex("[^a-z0-9]+"), " ").trim().replace(Regex("\\s+"), " ")
     private fun clean(value: String): String = value.replace(Regex("\\s+"), " ").trim()
     private fun enc(value: String): String = java.net.URLEncoder.encode(value, "UTF-8")
 
