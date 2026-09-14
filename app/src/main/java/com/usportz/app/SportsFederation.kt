@@ -9,8 +9,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.time.Instant
-import java.time.LocalDate
 
 /** Wave 2: additive multi-provider federation. Provider failures never erase another provider's data. */
 object SportsFederation {
@@ -49,12 +47,10 @@ object SportsFederation {
         buildList {
             for (i in 0 until array.length()) {
                 val o = array.optJSONObject(i) ?: continue
-                val away = first(o, "away", "away_team", "visitor", "visitor_team", "awayTeam")
-                val home = first(o, "home", "home_team", "host", "homeTeam")
-                val awayName = teamName(away)
-                val homeName = teamName(home)
+                val away = firstTeam(o, "away", "away_team", "visitor", "visitor_team", "awayTeam")
+                val home = firstTeam(o, "home", "home_team", "host", "homeTeam")
                 val title = first(o, "name", "title", "matchup", "description")
-                val competitors = listOf(awayName, homeName).filter { it.isNotBlank() }.ifEmpty { splitTitle(title) }
+                val competitors = listOf(away, home).filter { it.isNotBlank() }.ifEmpty { splitTitle(title) }
                 if (competitors.isEmpty()) continue
                 val start = first(o, "startTime", "start_time", "date", "datetime", "gameDate", "scheduled")
                 if (start.isBlank()) continue
@@ -84,6 +80,20 @@ object SportsFederation {
         }
     }.getOrDefault(emptyList())
 
+    private fun firstTeam(o: JSONObject, vararg keys: String): String {
+        for (key in keys) {
+            val value = o.opt(key)
+            when (value) {
+                is JSONObject -> {
+                    val name = teamName(value)
+                    if (name.isNotBlank()) return name
+                }
+                is String -> if (value.isNotBlank() && value != "null") return value.trim()
+            }
+        }
+        return ""
+    }
+
     private fun first(o: JSONObject, vararg keys: String): String {
         for (key in keys) {
             val v = o.opt(key)
@@ -93,6 +103,7 @@ object SportsFederation {
                     val n = teamName(v)
                     if (n.isNotBlank()) return n
                 }
+                is Number, is Boolean -> return v.toString()
             }
         }
         return ""
