@@ -10,7 +10,8 @@ import java.time.ZoneId
  */
 object LiveEventRetention {
     fun requestedDates(today: LocalDate, lookaheadDays: Long = 7L): List<LocalDate> =
-        listOf(today.minusDays(1), today) + (1..lookaheadDays.toInt()).map(today::plusDays)
+        listOf(today.minusDays(1), today) +
+            (1..lookaheadDays.toInt()).map { offset -> today.plusDays(offset.toLong()) }
 
     fun keep(startTime: String, state: String, nowMillis: Long = System.currentTimeMillis()): Boolean {
         val start = runCatching { Instant.parse(startTime) }.getOrNull() ?: return false
