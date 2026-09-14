@@ -96,7 +96,10 @@ object SportsSchedule {
             val critical = async { criticalFeeds.map { feed -> async(feedDispatcher) { withTimeoutOrNull(CRITICAL_TIMEOUT_MS) { fetchFeed(feed, today, last, true) }.orEmpty() } }.awaitAll().flatten() }
             val dedicated = async { withTimeoutOrNull(DEDICATED_TIMEOUT_MS) { runCatching { DedicatedSchedule.load() }.getOrDefault(emptyList()) }.orEmpty() }
             val monster = async { withTimeoutOrNull(1500L) { runCatching { MonsterJamSchedule.load(today, last) }.getOrDefault(emptyList()) }.orEmpty() }
-            Triple(official.await(), critical.await(), dedicated.await() + monster.await())
+            val federation = async { withTimeoutOrNull(CRITICAL_TIMEOUT_MS) { runCatching { SportsFederation.loadToday() }.getOrDefault(emptyList()) }.orEmpty() }
+            val wwe = async { withTimeoutOrNull(DEDICATED_TIMEOUT_MS) { runCatching { WweSchedule.load(today, last) }.getOrDefault(emptyList()) }.orEmpty() }
+            val dedicatedAll = dedicated.await() + monster.await() + federation.await() + wwe.await()
+            Triple(official.await(), critical.await(), dedicatedAll)
         }
 
         val incoming = sanitizeWindow(fast.first + fast.second + fast.third, now)
@@ -113,8 +116,10 @@ object SportsSchedule {
                 val extra = missing.map { feed -> async(feedDispatcher) { withTimeoutOrNull(5500L) { fetchFeed(feed, today, last, false) }.orEmpty() } }.awaitAll().flatten()
                 val dedicated = withTimeoutOrNull(2500L) { runCatching { DedicatedSchedule.load() }.getOrDefault(emptyList()) }.orEmpty()
                 val monster = withTimeoutOrNull(1500L) { runCatching { MonsterJamSchedule.load(today, last) }.getOrDefault(emptyList()) }.orEmpty()
+                val federation = withTimeoutOrNull(CRITICAL_TIMEOUT_MS) { runCatching { SportsFederation.loadToday() }.getOrDefault(emptyList()) }.orEmpty()
+                val wwe = withTimeoutOrNull(DEDICATED_TIMEOUT_MS) { runCatching { WweSchedule.load(today, last) }.getOrDefault(emptyList()) }.orEmpty()
                 val now = System.currentTimeMillis()
-                val incoming = sanitizeWindow(extra + dedicated + monster, now)
+                val incoming = sanitizeWindow(extra + dedicated + monster + federation + wwe, now)
                 if (incoming.isNotEmpty()) mergeAndCache(incoming, today, last, now)
             } finally { backgroundRunning.set(false) }
         }
