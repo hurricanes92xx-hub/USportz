@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "com.usportz.app.baselineprofile"
     compileSdk = 35
+    targetProjectPath = ":app"
 
     defaultConfig {
         minSdk = 28
