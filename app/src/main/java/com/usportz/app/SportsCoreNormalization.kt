@@ -3,7 +3,6 @@ package com.usportz.app
 /** Canonical state used by every sports feed before UI or matching. */
 enum class SportsEventState { PRE, IN, POST, UNKNOWN }
 
-/** Source-independent normalized event identity. */
 data class NormalizedSportsEvent(
     val event: SportsEvent,
     val state: SportsEventState,
@@ -29,18 +28,16 @@ object SportsEventNormalizer {
         return NormalizedSportsEvent(event, state(event), league, sport, teams, broadcasters, key)
     }
 
-    fun state(event: SportsEvent): SportsEventState {
-        return when (event.state.lowercase()) {
-            "in", "live", "playing", "ongoing" -> SportsEventState.IN
-            "post", "final", "finished", "complete", "completed" -> SportsEventState.POST
-            "pre", "scheduled", "upcoming" -> SportsEventState.PRE
-            else -> {
-                val start = runCatching { java.time.Instant.parse(event.startTime).toEpochMilli() }.getOrNull()
-                when {
-                    start == null -> SportsEventState.UNKNOWN
-                    start <= System.currentTimeMillis() -> SportsEventState.IN
-                    else -> SportsEventState.PRE
-                }
+    fun state(event: SportsEvent): SportsEventState = when (event.state.lowercase()) {
+        "in", "live", "playing", "ongoing" -> SportsEventState.IN
+        "post", "final", "finished", "complete", "completed" -> SportsEventState.POST
+        "pre", "scheduled", "upcoming" -> SportsEventState.PRE
+        else -> {
+            val start = runCatching { java.time.Instant.parse(event.startTime).toEpochMilli() }.getOrNull()
+            when {
+                start == null -> SportsEventState.UNKNOWN
+                start <= System.currentTimeMillis() -> SportsEventState.IN
+                else -> SportsEventState.PRE
             }
         }
     }
@@ -58,43 +55,39 @@ object SportsEventNormalizer {
     }
 
     private fun canonicalToken(value: String): String = value.lowercase()
-        .replace('&', ' ')
-        .replace(Regex("[^a-z0-9]+"), " ")
-        .trim()
-        .replace(Regex("\\s+"), " ")
+        .replace('&', ' ').replace(Regex("[^a-z0-9]+"), " ").trim().replace(Regex("\\s+"), " ")
 }
 
-/** Shared source contract. Providers can fail independently without taking down the sports screen. */
+/** Provider contract: a failing feed is isolated from the rest of the sports pipeline. */
 interface SportsFeedSource {
     val id: String
     suspend fun load(): List<SportsEvent>
 }
 
 object SportsFeedMerger {
-    fun merge(events: List<SportsEvent>, limit: Int = 2500): List<SportsEvent> =
-        events.asSequence()
-            .map(SportsEventNormalizer::normalize)
-            .groupBy { it.canonicalKey }
-            .values
-            .mapNotNull { group -> choose(group) }
-            .sortedWith(
-                compareByDescending<SportsEvent> { SportsEventNormalizer.state(it) == SportsEventState.IN }
-                    .thenBy { runCatching { java.time.Instant.parse(it.startTime).toEpochMilli() }.getOrDefault(Long.MAX_VALUE) }
-            )
-            .take(limit.coerceAtLeast(1))
+    fun merge(events: List<SportsEvent>, limit: Int = 2500): List<SportsEvent> = events.asSequence()
+        .map(SportsEventNormalizer::normalize)
+        .groupBy { it.canonicalKey }
+        .values
+        .mapNotNull { choose(it) }
+        .sortedWith(
+            compareByDescending<SportsEvent> { SportsEventNormalizer.state(it) == SportsEventState.IN }
+                .thenBy { runCatching { java.time.Instant.parse(it.startTime).toEpochMilli() }.getOrDefault(Long.MAX_VALUE) }
+        )
+        .take(limit.coerceAtLeast(1))
+        .toList()
 
-    private fun choose(group: List<NormalizedSportsEvent>): SportsEvent? =
-        group.maxWithOrNull(
-            compareBy<NormalizedSportsEvent> { quality(it.event) }
-                .thenBy { SportsEventNormalizer.state(it.event) == SportsEventState.IN }
-        )?.event
+    private fun choose(group: List<NormalizedSportsEvent>): SportsEvent? = group.maxWithOrNull(
+        compareBy<NormalizedSportsEvent> { quality(it.event) }
+            .thenBy { it.state == SportsEventState.IN }
+    )?.event
 
     private fun quality(event: SportsEvent): Int =
         event.competitors.count { it.isNotBlank() } * 30 +
-            event.competitorLogos.count { it.isNotBlank() } * 20 +
-            if (event.broadcast.isNotBlank()) 15 else 0 +
-            if (event.detail.isNotBlank()) 5 else 0 +
-            if (!event.leagueLogo.isNullOrBlank()) 5 else 0
+        event.competitorLogos.count { it.isNotBlank() } * 20 +
+        (if (event.broadcast.isNotBlank()) 15 else 0) +
+        (if (event.detail.isNotBlank()) 5 else 0) +
+        (if (!event.leagueLogo.isNullOrBlank()) 5 else 0)
 }
 
 object TeamAliasEngine {
@@ -114,10 +107,8 @@ object TeamAliasEngine {
             .trim().replace(Regex("\\s+"), " ")
         if (base.isBlank()) return ""
         aliases[base]?.let { return it }
-        return base
-            .replace(Regex("\\b(university|college|the)\\b"), " ")
-            .replace(Regex("\\s+"), " ").trim()
-            .replace(" state ", " st ")
+        return base.replace(Regex("\\b(university|college|the)\\b"), " ")
+            .replace(Regex("\\s+"), " ").trim().replace(" state ", " st ")
     }
 
     fun matches(query: String, candidate: String): Boolean {
