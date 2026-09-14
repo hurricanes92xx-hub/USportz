@@ -33,13 +33,15 @@ object GameSourceMatcher {
             val matchedTeams = event.competitors.count { TeamAliasEngine.matches(it, haystack) }
             val leagueHit = event.league.isNotBlank() && haystack.contains(BroadcasterNormalizer.canonical(event.league))
             val eventFeed = Regex("\\b(event|feed|ppv|live)\\b", RegexOption.IGNORE_CASE).containsMatchIn(channel.name)
-            val score = base * 10 + broadcast + normalizedBroadcast + matchedTeams * 15 + if (leagueHit) 10 else 0 + if (eventFeed) 4 else 0
+            val majorSportsBonus = MajorSportsIntelligence.sourceBonus(event, channel)
+            val score = base * 10 + broadcast + normalizedBroadcast + matchedTeams * 15 + if (leagueHit) 10 else 0 + if (eventFeed) 4 else 0 + majorSportsBonus
             val confidence = confidence(score, matchedTeams, eventTeams.size, broadcast, normalizedBroadcast, leagueHit)
             val reasons = buildList {
                 if (matchedTeams > 0) add("team")
                 if (broadcast > 0 || normalizedBroadcast > 0) add("broadcaster")
                 if (leagueHit) add("league")
                 if (eventFeed) add("event-feed")
+                if (majorSportsBonus > 0) add("major-sports")
             }
             Match(channel, score, broadcast, confidence, reasons)
         }
@@ -66,8 +68,6 @@ object GameSourceMatcher {
 
     private fun containsUnrelatedTeam(text: String, eventTeams: List<String>): Boolean {
         val normalized = TeamAliasEngine.canonical(text)
-        // Only hard-exclude recognizable opponent/team aliases that occur as a full phrase.
-        // Generic network names remain eligible.
         val known = SportsTeamLexicon.knownTeams()
         return known.any { knownTeam ->
             val canonicalKnown = TeamAliasEngine.canonical(knownTeam)
@@ -87,7 +87,7 @@ object SportsEventNormalizerText {
 object SportsTeamLexicon {
     private val teams = setOf(
         "Alabama", "Auburn", "Arkansas", "Clemson", "Duke", "Florida", "Florida State", "Georgia",
-        "Georgia Tech", "LSU", "Miami", "Miami Hurricanes", "Michigan", "Michigan State", "Notre Dame",
+        "Georgia Tech", "LSU", "Florida State", "Miami", "Miami Hurricanes", "Michigan", "Michigan State", "Notre Dame",
         "Ohio State", "Oklahoma", "Oklahoma State", "Ole Miss", "Oregon", "Penn State", "Texas",
         "Texas A&M", "Texas Tech", "USC", "UCLA", "Utah", "Washington", "Wisconsin", "Iowa",
         "Kansas", "Kansas State", "Kentucky", "Louisville", "NC State", "North Carolina", "Pittsburgh",
