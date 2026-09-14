@@ -52,23 +52,19 @@ object NcaaSportsService {
             "basketball-women", "ncaaw" -> "basketball-women"
             else -> return@withContext emptyList()
         }
-        // The upstream API exposes the current scoreboard directly; date-aware routes vary
-        // by sport. ESPN remains the broader upcoming feed, while NCAA is our live/current supplement.
         val key = "$pathSport/$division/${date}"
         val now = System.currentTimeMillis()
         cache[key]?.takeIf { it.expiresAt > now }?.let { return@withContext it.games }
-        val result = fetch("$baseUrl/scoreboard/$pathSport/$division")
+        val result = fetch("$baseUrl/scoreboard/$pathSport/$division", pathSport, division)
         val bounded = result.take(MAX_GAMES)
         cache[key] = CacheEntry(now + CACHE_MS, bounded)
         bounded
     }
 
-    /** Raw schools-index response. */
     suspend fun schools(): JSONObject? = withContext(Dispatchers.IO) {
         fetchJson("$baseUrl/schools-index")
     }
 
-    /** Convert NCAA records into the app's single normalized SportsEvent model. */
     fun toSportsEvents(games: List<NcaaGame>): List<SportsEvent> = games.mapNotNull { game ->
         val teams = game.competitors.map { it.trim() }.filter { it.isNotBlank() }.take(2)
         val start = normalizeStart(game.startTime) ?: return@mapNotNull null
@@ -78,7 +74,7 @@ object NcaaSportsService {
             else -> "college"
         }
         val league = when {
-            game.sport.contains("football", true) -> "NCAA Football"
+            game.sport.equals("football", true) && game.division.equals("fbs", true) -> "NCAA Football"
             game.sport.contains("basketball-men", true) -> "NCAA Basketball"
             game.sport.contains("basketball-women", true) -> "NCAA Women's Basketball"
             else -> "NCAA ${game.sport}"
@@ -115,7 +111,7 @@ object NcaaSportsService {
         }
     }
 
-    private fun fetch(url: String): List<NcaaGame> = runCatching {
+    private fun fetch(url: String, sport: String, division: String): List<NcaaGame> = runCatching {
         val json = fetchJson(url) ?: return@runCatching emptyList()
         val games = json.optJSONArray("games") ?: json.optJSONArray("contests") ?: json.optJSONObject("data")?.optJSONArray("contests") ?: JSONArray()
         buildList {
@@ -126,16 +122,16 @@ object NcaaSportsService {
                 val scores = ArrayList<String>()
                 for (j in 0 until (teams?.length() ?: 0)) {
                     val t = teams?.optJSONObject(j) ?: continue
-                    val name = t.optString("name").ifBlank { t.optString("shortName") }.ifBlank { t.optString("description") }
+                    val name = t.optString("name").ifBlank { t.optString("nameShort") }.ifBlank { t.optString("shortName") }.ifBlank { t.optString("description") }
                     if (name.isNotBlank()) names += name
                     scores += t.optString("score").ifBlank { t.optString("scoreDisplay") }
                 }
                 add(NcaaGame(
-                    id = g.optString("gameID").ifBlank { g.optString("contestId") }.ifBlank { g.optString("id") }.ifBlank { "ncaa:$i" },
-                    sport = g.optString("sport").ifBlank { "college" },
-                    division = g.optString("division").ifBlank { "d1" },
+                    id = g.optString("gameID").ifBlank { g.optString("contestId") }.ifBlank { g.optString("id") }.ifBlank { "ncaa:$sport:$i" },
+                    sport = sport,
+                    division = division,
                     season = g.optString("season").ifBlank { g.optString("year") },
-                    name = g.optString("gameName").ifBlank { g.optString("name") },
+                    name = g.optString("gameName").ifBlank { g.optString("name") }.ifBlank { g.optString("title") },
                     state = g.optString("status").ifBlank { g.optString("gameState") },
                     startTime = g.optString("startDate").ifBlank { g.optString("startTime") }.ifBlank { g.optString("startTimeEpoch") },
                     competitors = names.take(2),
