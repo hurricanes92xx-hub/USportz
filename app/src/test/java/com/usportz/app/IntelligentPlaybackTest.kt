@@ -5,7 +5,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IntelligentPlaybackTest {
-    private val channel = SportsChannel("1", "ESPN HD", "Sports", "https://example.com/live.m3u8", "ESPN", "espn", "ESPN", "p")
+    // SportsChannel stores logo before URL; keep the test fixture aligned with the production model.
+    private val channel = SportsChannel("1", "ESPN HD", "Sports", "", "https://example.com/live.m3u8", "ESPN", "espn", "ESPN", "p")
     private val event = SportsEvent("1", "football", "NCAA", "Miami vs Utah", "", "in", "2026-09-14T20:00:00Z", listOf("Miami", "Utah"), emptyList(), "", "", "ESPN")
 
     @Test fun detectsStreamFamilies() {
