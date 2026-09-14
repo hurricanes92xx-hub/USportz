@@ -8,6 +8,6 @@ object ChannelDnaRuntime {
     fun observe(channel: SportsChannel) { vault?.observe(channel) }
     fun success(channel: SportsChannel) { vault?.recordSuccess(channel) }
     fun failure(channel: SportsChannel) { vault?.recordFailure(channel) }
-    fun bestUrl(channel: SportsChannel): String = vault?.bestUrl(channel) ?: channel.url
+    fun bestUrl(channel: SportsChannel): String = vault?.dna(channel)?.lastUrl?.takeIf { it.isNotBlank() } ?: channel.url
     fun score(channel: SportsChannel): Int = vault?.dna(channel)?.score ?: 50
 }
