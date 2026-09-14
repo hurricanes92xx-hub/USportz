@@ -14,6 +14,11 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "1.0.1"
+
+        val ncaaBase = project.findProperty("NCAA_API_BASE_URL")?.toString()?.trim()?.ifBlank { "https://ncaa-api.henrygd.me" } ?: "https://ncaa-api.henrygd.me"
+        val ncaaKey = project.findProperty("NCAA_API_KEY")?.toString()?.trim().orEmpty()
+        buildConfigField("String", "NCAA_API_BASE_URL", "\"${ncaaBase.replace("\"", "\\\"")}\"")
+        buildConfigField("String", "NCAA_API_KEY", "\"${ncaaKey.replace("\"", "\\\"")}\"")
     }
 
     buildTypes {
