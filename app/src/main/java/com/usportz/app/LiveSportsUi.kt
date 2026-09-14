@@ -18,19 +18,14 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-typealias Favs = MutableMap<String, Boolean>
-
-private fun Favs.isEventFav(id: String): Boolean = this[id] == true
-private fun Favs.toggleEvent(id: String) { this[id] = !isEventFav(id) }
-
 /** Sprint 2: focused live-sports presentation with bounded lists and one-tap playback. */
 @Composable
-fun LiveSportsScreen(context: Context, events: List<SportsEvent>, channels: List<SportsChannel>, favorites: Favs, onRefresh: () -> Unit = {}) {
+fun LiveSportsScreen(context: Context, events: List<SportsEvent>, channels: List<SportsChannel>, favorites: MutableMap<String, Boolean>, onRefresh: () -> Unit = {}) {
     var tab by remember { mutableStateOf("Live Now") }
     val now = System.currentTimeMillis()
     val live = events.map { it.copy(state = liveState(it, now)) }.filter { it.state == "in" }
     val upcoming = events.map { it.copy(state = liveState(it, now)) }.filter { it.state == "pre" }.sortedBy { epoch(it.startTime) ?: Long.MAX_VALUE }.take(60)
-    val mine = events.filter { favorites.isEventFav(it.id) }
+    val mine = events.filter { favorites[it.id] == true }
     val shown = when (tab) { "Upcoming" -> upcoming; "My Sports" -> mine; else -> live }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -54,7 +49,7 @@ fun LiveSportsScreen(context: Context, events: List<SportsEvent>, channels: List
 }
 
 @Composable
-private fun SportsEventCard(context: Context, event: SportsEvent, channels: List<SportsChannel>, favorites: Favs) {
+private fun SportsEventCard(context: Context, event: SportsEvent, channels: List<SportsChannel>, favorites: MutableMap<String, Boolean>) {
     val sources = remember(event.id, channels) { GameSourceMatcher.rankMatches(event, channels, 8) }
     val best = sources.firstOrNull()?.channel
     Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
@@ -78,8 +73,8 @@ private fun SportsEventCard(context: Context, event: SportsEvent, channels: List
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { favorites.toggleEvent(event.id) }) {
-                    Text(if (favorites.isEventFav(event.id)) "★ MY SPORTS" else "☆ MY SPORTS")
+                TextButton(onClick = { favorites[event.id] = favorites[event.id] != true }) {
+                    Text(if (favorites[event.id] == true) "★ MY SPORTS" else "☆ MY SPORTS")
                 }
                 if (best != null) {
                     Button(onClick = { context.startActivity(Intent(context, RichPlayerActivity::class.java).putExtra(RichPlayerActivity.EXTRA_URL, best.url)) }) {
