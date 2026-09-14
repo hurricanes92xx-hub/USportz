@@ -4,8 +4,9 @@ import java.net.URI
 
 /** Builds a small, deterministic retry set without exposing credentials or proxying streams. */
 object PlaybackRecovery {
-    fun candidates(channel: SportsChannel): List<String> {
-        val original = channel.url.trim()
+    /** URL-only overload for the player, keeping retry policy independent of catalogue state. */
+    fun candidates(url: String): List<String> {
+        val original = url.trim()
         if (original.isBlank()) return emptyList()
         val out = LinkedHashSet<String>()
         out += original
@@ -24,4 +25,6 @@ object PlaybackRecovery {
         }
         return out.take(3)
     }
+
+    fun candidates(channel: SportsChannel): List<String> = candidates(channel.url)
 }
