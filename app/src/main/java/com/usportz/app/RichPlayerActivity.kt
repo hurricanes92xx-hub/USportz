@@ -53,49 +53,87 @@ class RichPlayerActivity : ComponentActivity() {
     @Composable
     private fun ProductionPlayer(initialUrl: String) {
         val context = LocalContext.current
-        var activeUrl by remember(initialUrl) { mutableStateOf(initialUrl) }
-        var retry by remember(initialUrl) { mutableIntStateOf(0) }
+        val recoveryUrls = remember(initialUrl) { PlaybackRecovery.candidates(initialUrl) }
+        var candidateIndex by remember(initialUrl) { mutableIntStateOf(0) }
+        var activeUrl by remember(initialUrl) { mutableStateOf(recoveryUrls.firstOrNull().orEmpty()) }
         var error by remember(initialUrl) { mutableStateOf<String?>(null) }
-        var startedAt by remember(initialUrl, retry, activeUrl) { mutableLongStateOf(System.currentTimeMillis()) }
+        var startedAt by remember(initialUrl, candidateIndex, activeUrl) { mutableLongStateOf(System.currentTimeMillis()) }
 
-        val player = remember(activeUrl, retry) {
+        if (activeUrl.isBlank()) { LaunchedEffect(Unit) { finish() }; return }
+
+        val player = remember(activeUrl) {
             startedAt = System.currentTimeMillis()
             val dataSourceFactory = DefaultHttpDataSource.Factory()
                 .setConnectTimeoutMs(5_000).setReadTimeoutMs(12_000)
-                .setAllowCrossProtocolRedirects(true).setUserAgent("USportz/2.0")
-            val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(1_500, 12_000, 800, 1_500)
+                .setAllowCrossProtocolRedirects(true).setUserAgent("USPortz/2.0")
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(1_500, 12_000, 800, 1_500)
                 .setPrioritizeTimeOverSizeThresholds(true).build()
-            val renderers = DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER).setEnableDecoderFallback(true)
-            ExoPlayer.Builder(context, renderers).setBandwidthMeter(DefaultBandwidthMeter.getSingletonInstance(context)).setLoadControl(loadControl).build().apply {
-                val uri = Uri.parse(activeUrl)
-                val path = uri.toString().substringBefore('?').lowercase()
-                val kind = StreamClassifier.kind(activeUrl)
-                val looksHls = kind == StreamKind.HLS || path.contains("hls") || path.contains("m3u8")
-                val item = MediaItem.Builder().setUri(uri).setMediaMetadata(MediaMetadata.Builder().setTitle("USportz Live").build()).build()
-                if (looksHls) setMediaSource(HlsMediaSource.Factory(dataSourceFactory).createMediaSource(item)) else setMediaItem(item)
-                addListener(object : Player.Listener {
-                    override fun onPlayerError(e: PlaybackException) { error = e.errorCodeName }
-                    override fun onPlaybackStateChanged(state: Int) {
-                        if (state == Player.STATE_READY) { PlaybackStartupMeter.record(startedAt, System.currentTimeMillis(), true); error = null }
-                    }
-                })
-                prepare(); playWhenReady = true
-            }
+            val renderers = DefaultRenderersFactory(context)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                .setEnableDecoderFallback(true)
+            ExoPlayer.Builder(context, renderers)
+                .setBandwidthMeter(DefaultBandwidthMeter.getSingletonInstance(context))
+                .setLoadControl(loadControl).build().apply {
+                    val uri = Uri.parse(activeUrl)
+                    val path = uri.toString().substringBefore('?').lowercase()
+                    val kind = StreamClassifier.kind(activeUrl)
+                    val looksHls = kind == StreamKind.HLS || path.contains("hls") || path.contains("m3u8")
+                    val item = MediaItem.Builder().setUri(uri)
+                        .setMediaMetadata(MediaMetadata.Builder().setTitle("USPortz Live").build()).build()
+                    if (looksHls) setMediaSource(HlsMediaSource.Factory(dataSourceFactory).createMediaSource(item))
+                    else setMediaItem(item)
+                    addListener(object : Player.Listener {
+                        override fun onPlayerError(e: PlaybackException) { error = e.errorCodeName }
+                        override fun onPlaybackStateChanged(state: Int) {
+                            if (state == Player.STATE_READY) {
+                                PlaybackStartupMeter.record(startedAt, System.currentTimeMillis(), true)
+                                error = null
+                            }
+                        }
+                    })
+                    prepare(); playWhenReady = true
+                }
         }
         DisposableEffect(player) { onDispose { player.release() } }
+
         LaunchedEffect(player, error) {
-            if (error != null) {
-                PlaybackStartupMeter.record(startedAt, System.currentTimeMillis(), false)
-                delay(IntelligentPlayback.RETRY_DELAY_MS)
-                if (error != null) retry++
+            if (error == null) return@LaunchedEffect
+            PlaybackStartupMeter.record(startedAt, System.currentTimeMillis(), false)
+            delay(IntelligentPlayback.RETRY_DELAY_MS)
+            if (error != null && candidateIndex + 1 < recoveryUrls.size) {
+                candidateIndex++
+                activeUrl = recoveryUrls[candidateIndex]
+                error = null
             }
         }
+
         Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AndroidView(factory = { vc -> PlayerView(vc).apply { setPlayer(player); useController = true; controllerShowTimeoutMs = 3_000; setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS); keepScreenOn = true; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT } }, update = { it.setPlayer(player) }, modifier = Modifier.fillMaxSize())
-            IconButton(onClick = { finish() }, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+            AndroidView(
+                factory = { vc -> PlayerView(vc).apply {
+                    setPlayer(player); useController = true; controllerShowTimeoutMs = 3_000
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS); keepScreenOn = true
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                } },
+                update = { it.setPlayer(player) }, modifier = Modifier.fillMaxSize()
+            )
+            IconButton(onClick = { finish() }, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) {
+                Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+            }
             if (error != null) Box(Modifier.align(Alignment.Center)) {
-                IconButton(onClick = { error = null; retry++ }) { Icon(Icons.Default.Refresh, "Retry", tint = Color.White) }
-                Text("Playback interrupted — retrying…", color = Color.White, modifier = Modifier.padding(top = 56.dp))
+                IconButton(onClick = {
+                    if (candidateIndex + 1 < recoveryUrls.size) {
+                        candidateIndex++
+                        activeUrl = recoveryUrls[candidateIndex]
+                        error = null
+                    } else {
+                        error = null
+                    }
+                }) { Icon(Icons.Default.Refresh, "Retry", tint = Color.White) }
+                Text(
+                    if (candidateIndex + 1 < recoveryUrls.size) "Playback interrupted — trying alternate…" else "Playback interrupted — tap retry",
+                    color = Color.White, modifier = Modifier.padding(top = 56.dp)
+                )
             }
         }
     }
