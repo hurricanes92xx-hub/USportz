@@ -43,27 +43,32 @@ object StreamClassifier {
 object PlaybackHealth {
     private const val MAX_SCORE = 100
     private val state = ConcurrentHashMap<String, MutableHealth>()
-
     private data class MutableHealth(var failures: Int = 0, var successes: Int = 0, var lastFailureAt: Long = 0, var lastSuccessAt: Long = 0)
 
-    fun snapshot(channel: SportsChannel): ChannelHealth {
-        val s = state[channelKey(channel)] ?: return ChannelHealth(0, 0, 0, 0, 50)
+    fun snapshot(channel: SportsChannel): ChannelHealth = snapshot(channel.url)
+
+    fun snapshot(url: String): ChannelHealth {
+        val s = state[url] ?: return ChannelHealth(0, 0, 0, 0, 50)
         val score = (50 + s.successes * 10 - s.failures * 18).coerceIn(0, MAX_SCORE)
         return ChannelHealth(s.failures, s.successes, s.lastFailureAt, s.lastSuccessAt, score)
     }
 
-    fun recordSuccess(channel: SportsChannel, now: Long = System.currentTimeMillis()) {
-        val s = state.computeIfAbsent(channelKey(channel)) { MutableHealth() }
+    fun recordSuccess(channel: SportsChannel, now: Long = System.currentTimeMillis()) = recordSuccess(channel.url, now)
+
+    fun recordSuccess(url: String, now: Long = System.currentTimeMillis()) {
+        if (url.isBlank()) return
+        val s = state.computeIfAbsent(url) { MutableHealth() }
         s.successes = (s.successes + 1).coerceAtMost(20); s.lastSuccessAt = now
     }
 
-    fun recordFailure(channel: SportsChannel, failure: PlaybackFailure, now: Long = System.currentTimeMillis()) {
-        val s = state.computeIfAbsent(channelKey(channel)) { MutableHealth() }
+    fun recordFailure(channel: SportsChannel, failure: PlaybackFailure, now: Long = System.currentTimeMillis()) = recordFailure(channel.url, failure, now)
+
+    fun recordFailure(url: String, failure: PlaybackFailure, now: Long = System.currentTimeMillis()) {
+        if (url.isBlank()) return
+        val s = state.computeIfAbsent(url) { MutableHealth() }
         val weight = when (failure) { PlaybackFailure.DECODER, PlaybackFailure.FORMAT -> 2; else -> 1 }
         s.failures = (s.failures + weight).coerceAtMost(20); s.lastFailureAt = now
     }
-
-    private fun channelKey(channel: SportsChannel): String = channel.url.ifBlank { "${channel.provider}|${channel.id}" }
 }
 
 object PlaybackFailureClassifier {
@@ -93,10 +98,10 @@ object IntelligentPlayback {
     fun rank(event: SportsEvent, matches: List<GameSourceMatcher.Match>): List<StreamCandidate> {
         val preferred = SportsBroadcasts.preferredNetworks(event).map { BroadcasterNormalizer.canonical(it) }.toSet()
         val remembered = BestSourceMemory.get(event.id)
-        return matches.asSequence().map { match ->
+        val ranked = matches.asSequence().map { match ->
             val kind = StreamClassifier.kind(match.channel.url)
             val family = StreamClassifier.family(match.channel)
-            val preferredHit = preferred.any { BroadcasterNormalizer.matches(it, match.channel.name, match.channel.group) }
+            val preferredHit = preferred.any { BroadcasterNormalizer.matches(it, "${match.channel.name} ${match.channel.group}") }
             val rememberedHit = remembered == match.channel.url
             val health = PlaybackHealth.snapshot(match.channel)
             val bonus = (if (preferredHit) 12 else 0) + (if (rememberedHit) 20 else 0) + (health.score - 50) / 5 + when (kind) { StreamKind.HLS -> 4; StreamKind.MPEG_TS -> 2; StreamKind.UNKNOWN -> 0 }
@@ -104,7 +109,14 @@ object IntelligentPlayback {
         }.sortedWith(compareByDescending<StreamCandidate> { it.remembered }
             .thenByDescending { it.score }
             .thenByDescending { it.confidence }
-            .thenBy { it.channel.name.lowercase(Locale.US) }).take(MAX_ATTEMPTS).toList()
+            .thenBy { it.channel.name.lowercase(Locale.US) }).toList()
+
+        // Collapse duplicate stream families so the source selector exposes genuinely different options.
+        val seenFamilies = HashSet<String>()
+        return ranked.filter { candidate ->
+            val key = candidate.family.ifBlank { candidate.channel.url }
+            seenFamilies.add(key)
+        }.take(MAX_ATTEMPTS)
     }
 
     fun recordSuccess(event: SportsEvent, channel: SportsChannel) = BestSourceMemory.put(event.id, channel.url)
