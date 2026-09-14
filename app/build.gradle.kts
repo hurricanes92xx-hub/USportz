@@ -18,7 +18,7 @@ android {
         versionName = "1.0.1"
 
         fun prop(name: String, fallback: String = "") = project.findProperty(name)?.toString()?.trim()?.ifBlank { fallback } ?: fallback
-        fun quote(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\"
+        fun quote(value: String) = "\"" + value.replace("\"", "\\\"") + "\""
 
         val ncaaBase = prop("NCAA_API_BASE_URL", "https://ncaa-api.henrygd.me")
         val ncaaKey = prop("NCAA_API_KEY")
