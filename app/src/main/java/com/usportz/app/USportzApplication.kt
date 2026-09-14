@@ -5,8 +5,14 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.SvgDecoder
 
-/** Shared image loader so SVG team and network logos render everywhere. */
+/** Shared app services: image loading, persistent channel identity, and provider registry. */
 class USportzApplication : Application(), ImageLoaderFactory {
+    override fun onCreate() {
+        super.onCreate()
+        ChannelDnaRuntime.init(this)
+        DefaultSportsProviders.install()
+    }
+
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
         .components { add(SvgDecoder.Factory()) }
         .crossfade(false)
