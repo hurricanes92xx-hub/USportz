@@ -15,11 +15,6 @@ android {
     }
 }
 
-baselineProfile {
-    managedDevices += "pixel2Api30"
-    useConnectedDevices = false
-}
-
 dependencies {
     implementation(project(":app"))
     implementation("androidx.benchmark:benchmark-macro-junit4:1.3.3")
