@@ -24,7 +24,7 @@ data class SportsChannel(val id: String, val name: String, val group: String, va
 
 object SportsChannelBridge {
     private const val CACHE_TTL_MS = 15 * 60 * 1000L
-    private const val BATCH_SIZE = 500
+    private const val BATCH_SIZE = 2000
     @Volatile private var cached: List<SportsChannel> = emptyList()
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedSourceKey = ""
@@ -35,7 +35,6 @@ object SportsChannelBridge {
     fun restoreCached(context: Context): List<SportsChannel> = cached
     fun currentSourceKey(): String = cachedSourceKey
 
-    /** Bounded disk candidate slice used by the existing event resolver. */
     fun indexedCandidates(event: SportsEvent, limit: Int = 1200): List<SportsChannel> {
         val context = appContext ?: return emptyList()
         val sourceKey = cachedSourceKey
