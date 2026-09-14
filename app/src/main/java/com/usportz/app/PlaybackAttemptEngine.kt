@@ -6,11 +6,13 @@ object PlaybackAttemptEngine {
 
     fun plan(event: SportsEvent, matches: List<GameSourceMatcher.Match>): List<Attempt> {
         val ranked = IntelligentPlayback.rank(event, matches)
-        val out = ArrayList<Attempt>(IntelligentPlayback.MAX_ATTEMPTS)
-        ranked.forEachIndexed { index, candidate ->
-            PlaybackRecovery.candidates(candidate.channel).firstOrNull()?.let { out += Attempt(candidate, it, index + 1) }
+        val primary = ranked.mapNotNull { candidate ->
+            PlaybackRecovery.candidates(candidate.channel).firstOrNull()?.let { candidate to it }
         }
-        return out
+        val alternates = ranked.flatMap { candidate -> PlaybackRecovery.candidates(candidate.channel).drop(1).map { candidate to it } }
+        return (primary + alternates).take(IntelligentPlayback.MAX_ATTEMPTS).mapIndexed { index, pair ->
+            Attempt(pair.first, pair.second, index + 1)
+        }
     }
 
     fun classifyFailure(message: String?, httpCode: Int? = null): PlaybackFailure =
