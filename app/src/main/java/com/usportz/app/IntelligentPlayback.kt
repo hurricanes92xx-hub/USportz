@@ -1,6 +1,6 @@
 package com.usportz.app
 
-import android.net.Uri
+import java.net.URI
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
@@ -23,11 +23,11 @@ data class StreamCandidate(
 
 object StreamClassifier {
     fun kind(url: String): StreamKind {
-        val path = Uri.parse(url).path.orEmpty().lowercase(Locale.US)
+        val path = runCatching { URI(url).path.orEmpty() }.getOrDefault(url.substringBefore('?')).lowercase(Locale.US)
         return when {
             path.endsWith(".m3u8") || path.contains("m3u8") -> StreamKind.HLS
             path.endsWith(".ts") || path.contains("/ts/") -> StreamKind.MPEG_TS
-            else -> StreamKind.UNKNOWN
+            else -> UNKNOWN
         }
     }
 
