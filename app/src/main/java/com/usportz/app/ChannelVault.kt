@@ -41,10 +41,12 @@ class ChannelVault(context: Context) {
         out
     }
 
-    suspend fun channelsForCategory(sourceKey: String, category: String, limit: Int = 500): List<SportsChannel> = withContext(Dispatchers.IO) = queryChannels(
-        "SELECT $ID,$NAME,$GROUP,$LOGO,$URL,$TVG_NAME,$TVG_ID,$CATEGORY,$PROVIDER FROM $TABLE WHERE $SOURCE = ? AND $CATEGORY = ? ORDER BY $N_NAME LIMIT ?",
-        arrayOf(sourceKey, category, limit.toString())
-    )
+    suspend fun channelsForCategory(sourceKey: String, category: String, limit: Int = 500): List<SportsChannel> = withContext(Dispatchers.IO) {
+        queryChannels(
+            "SELECT $ID,$NAME,$GROUP,$LOGO,$URL,$TVG_NAME,$TVG_ID,$CATEGORY,$PROVIDER FROM $TABLE WHERE $SOURCE = ? AND $CATEGORY = ? ORDER BY $N_NAME LIMIT ?",
+            arrayOf(sourceKey, category, limit.toString())
+        )
+    }
 
     suspend fun search(sourceKey: String, query: String, limit: Int = 100): List<SportsChannel> = withContext(Dispatchers.IO) {
         val q = "%${normalize(query).replace("%", "")}%"
