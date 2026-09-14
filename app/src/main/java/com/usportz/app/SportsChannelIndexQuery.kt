@@ -1,17 +1,16 @@
 package com.usportz.app
 
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /** Disk-side access to the complete channel index without loading every row into Compose. */
 object SportsChannelIndexQuery {
-    fun eventCandidates(context: Context, sourceKey: String, terms: List<String>, limit: Int = 1200): List<SportsChannel> {
-        val max = limit.coerceIn(1, 2000)
+    fun eventCandidates(context: Context, sourceKey: String, terms: List<String>, limit: Int = 240): List<SportsChannel> {
+        val max = limit.coerceIn(1, 600)
         val out = ArrayList<SportsChannel>(max)
         val seen = HashSet<String>()
         val db = Helper(context).readableDatabase
-        val safeTerms = terms.map { normalize(it).replace("%", " ").replace("_", " ") }.filter { it.length >= 3 }.distinct().take(18)
+        val safeTerms = terms.map(::normalize).filter { it.length >= 3 }.distinct().take(12)
         val base = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation WHERE c.source_key=?"
         if (safeTerms.isNotEmpty()) {
             val clauses = safeTerms.joinToString(" OR ") { "(LOWER(c.name) LIKE ? OR LOWER(c.tvg_name) LIKE ? OR LOWER(c.tvg_id) LIKE ? OR LOWER(c.grp) LIKE ? OR LOWER(c.category) LIKE ? OR LOWER(c.provider) LIKE ?)" }
@@ -36,7 +35,7 @@ object SportsChannelIndexQuery {
     private fun normalize(value: String): String = value.lowercase().replace("&", " and ").replace("+", " plus ").replace(Regex("[^a-z0-9]+"), " ").trim().replace(Regex("\\s+"), " ")
 
     private class Helper(context: Context) : SQLiteOpenHelper(context.applicationContext, "usportz_channels.db", null, 2) {
-        override fun onCreate(db: SQLiteDatabase) = Unit
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        override fun onCreate(db: android.database.sqlite.SQLiteDatabase) = Unit
+        override fun onUpgrade(db: android.database.sqlite.SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
     }
 }
