@@ -3,10 +3,8 @@ package com.usportz.app
 /**
  * UI-safe channel view over very large Xtream/M3U inventories.
  *
- * The previous implementation built token and prefix maps for every channel
- * during construction. With 50K+ channels that could block Compose for seconds
- * and trigger Android's "isn't responding" dialog. This implementation keeps
- * construction O(1) and bounds any fallback search work.
+ * Construction stays O(1): the full catalogue remains the source of truth and
+ * expensive ranking is only performed when the user actually searches.
  */
 class ChannelIndex<T>(
     items: List<T>,
@@ -48,13 +46,15 @@ class ChannelIndex<T>(
         val q = normalize(query)
         if (q.isBlank()) return emptyList()
         val safeLimit = limit.coerceIn(1, 100)
+
+        // Search the complete catalogue. The old 5,000-row cap could make a
+        // valid sports channel invisible simply because it appeared later in a
+        // large provider playlist. Only the bounded result list reaches UI.
         return allItems.asSequence()
-            // A search should never turn into an unbounded 56K-row Compose operation.
-            .take(5000)
             .filter { sport == null || SportsCatalog.classify(name(it), group(it)).equals(sport, true) }
             .map { it to score(it, q) }
             .filter { it.second > 0 }
-            .sortedByDescending { it.second }
+            .sortedWith(compareByDescending<Pair<T, Int>> { it.second }.thenBy { normalize(name(it.first)) })
             .take(safeLimit)
             .map { it.first }
             .toList()
