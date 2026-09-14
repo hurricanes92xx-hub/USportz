@@ -7,13 +7,17 @@ plugins {
 android {
     namespace = "com.usportz.app.baselineprofile"
     compileSdk = 35
-    targetProjectPath = ":app"
 
     defaultConfig {
         minSdk = 28
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+}
+
+baselineProfile {
+    managedDevices += "pixel2Api30"
+    useConnectedDevices = false
 }
 
 dependencies {
