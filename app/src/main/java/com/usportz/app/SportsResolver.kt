@@ -5,6 +5,12 @@ package com.usportz.app
  * identity/network/league scoring. Results are collapsed into stream families.
  * Provider health is deliberately a secondary signal: a temporarily bad
  * channel should lose priority, not make a valid event disappear.
+ *
+ * Confidence hierarchy:
+ *  - Tier 1: both teams, or a verified broadcast/network identity.
+ *  - Tier 2: one team plus strong league/network evidence.
+ *  - Tier 3: generic league/sport/event-feed channels, never allowed to
+ *    outrank a channel carrying a concrete team or exact broadcaster match.
  */
 object SportsResolver {
     data class WatchSource(val channel: SportsChannel, val score: Int, val reasons: List<String>)
@@ -53,14 +59,27 @@ object SportsResolver {
         if (family != null && network == null && tokenMatch(metadata, family)) { score += 12; reasons += "broadcast family" }
 
         val league = normalize(event.league)
-        if (league.isNotBlank() && (tokenMatch(channel.group, league) || tokenMatch(channel.category, league) || tokenMatch(channel.tvgName, league))) { score += 18; reasons += "league/category" }
+        val leagueMatch = league.isNotBlank() && (tokenMatch(channel.group, league) || tokenMatch(channel.category, league) || tokenMatch(channel.tvgName, league))
+        if (leagueMatch) { score += 18; reasons += "league/category" }
         val sport = normalize(SportsCatalog.classify(event.name, event.league))
-        if (sport.isNotBlank() && (tokenMatch(channel.group, sport) || tokenMatch(channel.category, sport))) { score += 8; reasons += "sport category" }
+        val sportMatch = sport.isNotBlank() && (tokenMatch(channel.group, sport) || tokenMatch(channel.category, sport))
+        if (sportMatch) { score += 8; reasons += "sport category" }
 
         if (channel.url.isNotBlank()) { score += 3; reasons += "playable URL" }
         val healthPenalty = ProviderHealth.penalty(channel.provider, now)
         if (healthPenalty > 0) { score -= healthPenalty; reasons += "provider health -$healthPenalty" }
         if (noiseWords.any { metadata.contains(it) } && distinctTeams == 0 && network == null && exact == null && labelMatch == null) score -= 35
+
+        // Generic league/sport channels are legitimate fallbacks, but they must
+        // never outrank a concrete team match or exact broadcaster identity.
+        val concreteEvidence = distinctTeams > 0 || teamHits > 0 || exact != null
+        if (!concreteEvidence && labelMatch != null && leagueMatch) {
+            score = score.coerceAtMost(59)
+            reasons += "generic fallback tier"
+        }
+
+        // A generic sports label by itself is too weak to become a watch source.
+        if (!concreteEvidence && !leagueMatch && exact == null) return null
 
         val capped = score.coerceAtMost(100)
         return if (capped >= 45) WatchSource(channel, capped, reasons.distinct().take(6)) else null
