@@ -12,7 +12,6 @@ object SportsBroadcasts {
         "Tennis Channel", "Golf Channel", "NBC Sports", "NFL Network", "NBA TV", "MLB Network", "NHL Network",
         "ACC Network", "ACC Network Extra", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network",
         "YES Network", "MASN", "SNY", "ION", "Telemundo", "Univision", "Unimas",
-        // Canada: TSN's five national feeds, Sportsnet's regional feeds, and French networks.
         "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "TSN+", "TSN Plus",
         "Sportsnet", "Sportsnet One", "Sportsnet 360", "Sportsnet East", "Sportsnet Ontario",
         "Sportsnet West", "Sportsnet Pacific", "Sportsnet World", "Sportsnet PPV",
@@ -21,41 +20,12 @@ object SportsBroadcasts {
     )
 
     private val bySport = linkedMapOf(
-        "Football" to listOf(
-            "NFL Network", "CBS", "FOX", "NBC", "ESPN", "ESPN2", "ABC", "Prime Video", "Peacock",
-            "NFL+", "USA Network", "CW", "SEC Network", "ACC Network", "Big Ten Network", "BTN",
-            "FS1", "FS2", "CBS Sports Network", "CBSSN", "ESPN+", "TNT",
-            "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "DAZN"
-        ),
-        "Basketball" to listOf(
-            "ABC", "ESPN", "ESPN2", "ESPNU", "ESPN+", "CBS", "CBS Sports Network", "CBSSN", "FOX",
-            "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "USA Network", "CW",
-            "NBA TV", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network",
-            "ION", "Paramount+", "Max", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "Sportsnet", "RDS"
-        ),
-        "NCAA Basketball" to listOf(
-            "ESPN", "ESPN2", "ESPNU", "ESPN+", "ABC", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2",
-            "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "CW", "ACC Network", "SEC Network",
-            "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "Paramount+", "Max",
-            "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "DAZN"
-        ),
-        "Baseball" to listOf(
-            "FOX", "FS1", "ESPN", "ESPN2", "ABC", "TBS", "MLB Network", "MLB.TV", "Apple TV+", "Apple TV",
-            "Peacock", "NBC", "CBS", "FOX Deportes", "ESPN+", "Roku", "Sportsnet", "Sportsnet One",
-            "Sportsnet Ontario", "TSN", "TSN2", "TSN3", "TSN4", "TSN5"
-        ),
-        "Hockey" to listOf(
-            "ESPN", "ESPN2", "ABC", "ESPN+", "TNT", "TBS", "truTV", "NHL Network", "NBC", "Peacock",
-            "CBS Sports Network", "CBSSN", "Big Ten Network", "BTN", "Sportsnet", "Sportsnet East", "Sportsnet Ontario",
-            "Sportsnet West", "Sportsnet Pacific", "Sportsnet 360", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5",
-            "RDS", "RDS2", "TVA Sports", "CBC"
-        ),
-        "Soccer" to listOf(
-            "Apple TV", "Apple TV+", "MLS Season Pass", "FOX", "FS1", "FS2", "ESPN", "ESPN2", "ESPN+", "ABC",
-            "CBS", "CBS Sports Network", "Paramount+", "NBC", "USA Network", "Peacock", "Telemundo", "Universo",
-            "Univision", "TUDN", "TNT", "TBS", "truTV", "TSN", "TSN2", "TSN3", "TSN4", "TSN5",
-            "Sportsnet", "RDS", "DAZN"
-        ),
+        "Football" to listOf("NFL Network", "CBS", "FOX", "NBC", "ESPN", "ESPN2", "ABC", "Prime Video", "Peacock", "NFL+", "USA Network", "CW", "SEC Network", "ACC Network", "Big Ten Network", "BTN", "FS1", "FS2", "CBS Sports Network", "CBSSN", "ESPN+", "TNT", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "DAZN"),
+        "Basketball" to listOf("ABC", "ESPN", "ESPN2", "ESPNU", "ESPN+", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "USA Network", "CW", "NBA TV", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "ION", "Paramount+", "Max", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "Sportsnet", "RDS"),
+        "NCAA Basketball" to listOf("ESPN", "ESPN2", "ESPNU", "ESPN+", "ABC", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "CW", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "Paramount+", "Max", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "DAZN"),
+        "Baseball" to listOf("FOX", "FS1", "ESPN", "ESPN2", "ABC", "TBS", "MLB Network", "MLB.TV", "Apple TV+", "Apple TV", "Peacock", "NBC", "CBS", "FOX Deportes", "ESPN+", "Roku", "Sportsnet", "Sportsnet One", "Sportsnet Ontario", "TSN", "TSN2", "TSN3", "TSN4", "TSN5"),
+        "Hockey" to listOf("ESPN", "ESPN2", "ABC", "ESPN+", "TNT", "TBS", "truTV", "NHL Network", "NBC", "Peacock", "CBS Sports Network", "CBSSN", "Big Ten Network", "BTN", "Sportsnet", "Sportsnet East", "Sportsnet Ontario", "Sportsnet West", "Sportsnet Pacific", "Sportsnet 360", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "RDS2", "TVA Sports", "CBC"),
+        "Soccer" to listOf("Apple TV", "Apple TV+", "MLS Season Pass", "FOX", "FS1", "FS2", "ESPN", "ESPN2", "ESPN+", "ABC", "CBS", "CBS Sports Network", "Paramount+", "NBC", "USA Network", "Peacock", "Telemundo", "Universo", "Univision", "TUDN", "TNT", "TBS", "truTV", "TSN", "TSN2", "TSN3", "TSN4", "TSN5", "Sportsnet", "RDS", "DAZN"),
         "MMA" to listOf("Paramount+", "CBS", "ESPN", "ESPN+", "UFC Fight Pass", "USA Network", "ABC", "TNT", "TSN", "Sportsnet", "DAZN", "Fight Network"),
         "Boxing" to listOf("ESPN", "ESPN+", "ABC", "FOX", "FS1", "FS2", "CBS", "Paramount+", "DAZN", "TNT", "TBS", "truTV", "Prime Video", "TSN", "Sportsnet", "RDS", "Fight Network"),
         "Wrestling" to listOf("USA Network", "USA", "CW", "Peacock", "ESPN", "Netflix", "FOX", "FS1", "ABC", "CBS", "TSN", "Sportsnet"),
@@ -83,13 +53,9 @@ object SportsBroadcasts {
     fun preferredNetworks(event: SportsEvent): List<String> {
         val sport = SportsCatalog.classify(event.name, event.league)
         val result = LinkedHashSet<String>()
-        event.broadcast.split(Regex("[,/|•]+"))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .forEach(result::add)
+        event.broadcast.split(Regex("[,/|•]+" )).map { it.trim() }.filter { it.isNotBlank() }.forEach(result::add)
         val league = normalize(event.league)
-        conferenceNetworks.entries.firstOrNull { league.contains(it.key) }
-            ?.value?.forEach(result::add)
+        conferenceNetworks.entries.firstOrNull { league.contains(it.key) }?.value?.forEach(result::add)
         bySport[sport].orEmpty().forEach(result::add)
         common.forEach { if (result.none { existing -> normalize(existing) == normalize(it) }) result.add(it) }
         return result.toList()
@@ -97,9 +63,7 @@ object SportsBroadcasts {
 
     fun priority(event: SportsEvent, channelName: String, group: String): Int {
         val haystack = normalize("$channelName $group")
-        val exactBroadcasts = event.broadcast.split(Regex("[,/|•]+"))
-            .map(::normalize)
-            .filter { it.isNotBlank() }
+        val exactBroadcasts = event.broadcast.split(Regex("[,/|•]+" )).map(::normalize).filter { it.isNotBlank() }
         if (exactBroadcasts.any { haystack.contains(it) }) return 100
         val preferred = preferredNetworks(event)
         val matched = preferred.indexOfFirst { alias ->
@@ -114,6 +78,7 @@ object SportsBroadcasts {
         }
     }
 
+    /** Normalize network names without destroying the legitimate USA network token. */
     fun normalize(value: String): String = value.lowercase()
         .replace("&", " and ")
         .replace("espn plus", "espn+")
@@ -127,7 +92,9 @@ object SportsBroadcasts {
         .replace("peacock premium", "peacock")
         .replace("prime video", "prime")
         .replace("apple tv plus", "apple tv+")
-        .replace(Regex("\\b(canada|ca|us|usa)\\b"), " ")
+        // Only strip standalone geographic suffixes. Never strip "usa": it is
+        // both a region label and the canonical name of a major sports network.
+        .replace(Regex("\\b(canada|ca)\\b"), " ")
         .replace(Regex("[^a-z0-9+]+"), " ")
         .trim()
 }
