@@ -1,0 +1,2 @@
+EPG is enrichment, not a prerequisite for showing the channel catalogue.
+Initial channel data should publish from the last-good SQLite snapshot immediately. EPG work may then enrich visible channels first and backfill the remainder in the background.
