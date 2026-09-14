@@ -1,21 +1,21 @@
 # USPortz
 
-Fresh Android + Android TV sports command center rebuilt from the observed product capabilities of the supplied AK47Sports v1.6 and SportzX 3.2 APKs.
+Fresh Android + Android TV sports command center rebuilt from observed product capabilities. The reliability pass is cache-first and optimized for large IPTV catalogues.
 
 ## Scope
-- Original Kotlin/Jetpack Compose implementation; no proprietary APK code is copied.
-- Xtream Codes M3U+ connection.
-- Generic M3U/M3U8 URL loading and local parsing.
-- Complete provider catalogue streamed into SQLite in bounded batches; Compose reads only bounded projections.
-- Live TV browsing and Media3 playback.
-- Sports/event home and category UI.
-- Event-to-channel resolution against the disk-backed catalogue.
-- Favorites persistence.
-- Search foundation.
-- Phone/tablet UI that can also be driven with TV directional input; TV-specific refinements are tracked in `TV_UI.md`.
+- Original Kotlin/Jetpack Compose implementation.
+- Xtream Codes M3U+ connection plus generic M3U/M3U8 loading.
+- Complete provider catalogue streamed into SQLite in bounded batches; Compose reads bounded projections.
+- Last-good catalogue snapshot remains available while provider refresh runs.
+- Live event rollover retention across midnight (yesterday + today + lookahead).
+- Indexed event-to-channel candidate resolution followed by detailed scoring.
+- Media3 live playback with bounded recovery attempts.
+- Sports/event home, categories, favorites and search foundation.
+- Channel data can render independently of EPG enrichment.
+- Phone/tablet UI with Android TV directional-input support.
 
 ## Security
-Xtream credentials are stored only in Android private preferences. Do not commit real credentials, playlists, or provider URLs.
+Xtream credentials remain device-side. Do not commit real credentials, playlists, or provider URLs.
 
 ## Build
-Open in Android Studio with a current Android SDK and run the `app` configuration. The repository intentionally contains no server-side proxy or Render service from the previous USPortz project.
+Open in Android Studio with a current Android SDK and run the `app` configuration. GitHub Actions builds the debug APK on pushes and pull requests targeting `main`.
