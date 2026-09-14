@@ -1,12 +1,17 @@
 package com.usportz.app
 
-import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /** Small SQLite catalog used as the fast startup source of truth for sports channels. */
-class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "usportz_channels.db", null, 2) {
+class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "usportz_channels.db", null, 3) {
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        if (!db.isReadOnly) runCatching { db.enableWriteAheadLogging() }
+        runCatching { db.execSQL("PRAGMA synchronous=NORMAL") }
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE channels (generation INTEGER NOT NULL, source_key TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, grp TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, tvg_name TEXT NOT NULL DEFAULT '', tvg_id TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', is_sports INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(generation, id))")
         db.execSQL("CREATE INDEX idx_channels_active_sports ON channels(source_key, generation, is_sports, name)")
@@ -35,27 +40,45 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "uspo
 
     fun insertBatch(sourceKey: String, generation: Long, batch: List<SportsChannel>) {
         if (batch.isEmpty()) return
-        val db = writableDatabase; db.beginTransactionNonExclusive()
+        val db = writableDatabase
+        db.beginTransactionNonExclusive()
+        val statement = db.compileStatement("INSERT OR REPLACE INTO channels(generation,source_key,id,name,grp,logo,url,tvg_name,tvg_id,category,provider,is_sports) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
         try {
             batch.forEach { channel ->
-                db.insertWithOnConflict("channels", null, ContentValues().apply {
-                    put("generation", generation); put("source_key", sourceKey); put("id", channel.id); put("name", channel.name); put("grp", channel.group); put("logo", channel.logo); put("url", channel.url)
-                    put("tvg_name", channel.tvgName); put("tvg_id", channel.tvgId); put("category", channel.category); put("provider", channel.provider)
-                    // Keep both branded networks and provider-side event feeds such as
-                    // NCAAF 01 / NCAAF 02 / TEAM A vs TEAM B in the sports catalog.
-                    put("is_sports", if (SportsNetworkCatalog.isSportsChannel(channel)) 1 else 0)
-                }, SQLiteDatabase.CONFLICT_REPLACE)
+                statement.clearBindings()
+                statement.bindLong(1, generation)
+                statement.bindString(2, sourceKey)
+                statement.bindString(3, channel.id)
+                statement.bindString(4, channel.name)
+                statement.bindString(5, channel.group)
+                if (channel.logo.isNullOrBlank()) statement.bindNull(6) else statement.bindString(6, channel.logo)
+                statement.bindString(7, channel.url)
+                statement.bindString(8, channel.tvgName)
+                statement.bindString(9, channel.tvgId)
+                statement.bindString(10, channel.category)
+                statement.bindString(11, channel.provider)
+                statement.bindLong(12, if (SportsNetworkCatalog.isSportsChannel(channel)) 1L else 0L)
+                statement.executeInsert()
             }
+            db.setTransactionSuccessful()
+        } finally {
+            statement.close()
+            db.endTransaction()
+        }
+    }
+
+    fun activate(sourceKey: String, generation: Long, count: Int) {
+        val db = writableDatabase
+        db.beginTransactionNonExclusive()
+        try {
+            db.execSQL("INSERT OR REPLACE INTO meta(source_key,active_generation,saved_at,channel_count) VALUES(?,?,?,?)", arrayOf(sourceKey, generation, System.currentTimeMillis(), count))
+            db.delete("channels", "source_key=? AND generation<>?", arrayOf(sourceKey, generation.toString()))
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
 
-    fun activate(sourceKey: String, generation: Long, count: Int) {
-        val db = writableDatabase; db.beginTransactionNonExclusive()
-        try {
-            db.insertWithOnConflict("meta", null, ContentValues().apply { put("source_key", sourceKey); put("active_generation", generation); put("saved_at", System.currentTimeMillis()); put("channel_count", count) }, SQLiteDatabase.CONFLICT_REPLACE)
-            db.delete("channels", "source_key=? AND generation<>?", arrayOf(sourceKey, generation.toString())); db.setTransactionSuccessful()
-        } finally { db.endTransaction() }
+    fun clearSource(sourceKey: String) {
+        writableDatabase.delete("channels", "source_key=?", arrayOf(sourceKey))
+        writableDatabase.delete("meta", "source_key=?", arrayOf(sourceKey))
     }
-    fun clearSource(sourceKey: String) { writableDatabase.delete("channels", "source_key=?", arrayOf(sourceKey)); writableDatabase.delete("meta", "source_key=?", arrayOf(sourceKey)) }
 }
