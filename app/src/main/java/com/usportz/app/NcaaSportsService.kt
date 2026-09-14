@@ -10,12 +10,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * NCAA-specific supplemental data source.
- *
- * It never blocks Xtream catalogue loading and never replaces the general schedule feed.
- * The public service is rate-limited, so requests are deliberately bounded and cached.
- */
+/** NCAA supplemental data source. Never blocks Xtream catalogue loading. */
 object NcaaSportsService {
     private const val BASE = "https://ncaa-api.henrygd.me"
     private const val CONNECT_MS = 1800
@@ -57,14 +52,18 @@ object NcaaSportsService {
         val now = System.currentTimeMillis()
         cache[key]?.takeIf { it.expiresAt > now }?.let { return@withContext it.games }
         val result = fetch("$BASE/scoreboard/$pathSport/$division/${date.year}/${date.monthValue.toString().padStart(2, '0')}/${date.dayOfMonth.toString().padStart(2, '0')}/all-conf")
-        cache[key] = CacheEntry(now + CACHE_MS, result.take(MAX_GAMES))
-        result.take(MAX_GAMES)
+        val bounded = result.take(MAX_GAMES)
+        cache[key] = CacheEntry(now + CACHE_MS, bounded)
+        bounded
     }
 
-    suspend fun schools(): JSONArray? = withContext(Dispatchers.IO) { fetchJson("$BASE/schools-index") }
+    /** Raw schools-index response. */
+    suspend fun schools(): JSONObject? = withContext(Dispatchers.IO) {
+        fetchJson("$BASE/schools-index")
+    }
 
     private fun fetch(url: String): List<NcaaGame> = runCatching {
-        val json = fetchJson(url) ?: return emptyList()
+        val json = fetchJson(url) ?: return@runCatching emptyList()
         val games = json.optJSONArray("games") ?: json.optJSONArray("contests") ?: JSONArray()
         buildList {
             for (i in 0 until games.length()) {
@@ -107,6 +106,8 @@ object NcaaSportsService {
             c.setRequestProperty("User-Agent", "USPortz/2.0 Android")
             if (c.responseCode !in 200..299) null
             else JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-        } finally { c.disconnect() }
+        } finally {
+            c.disconnect()
+        }
     }
 }
