@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: usportz-ncaa-api
+    runtime: image
+    plan: free
+    image:
+      url: docker.io/henrygd/ncaa-api:latest
+    healthCheckPath: /openapi
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NCAA_HEADER_KEY
+        generateValue: true
