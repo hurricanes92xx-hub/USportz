@@ -5,7 +5,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
-/** Provider registry. Providers normalize into SportsEvent; Xtream remains the playback source. */
 interface SportsEventProvider {
     val id: String
     val priority: Int
@@ -14,25 +13,11 @@ interface SportsEventProvider {
 
 object SportsProviderEngine {
     private val providers = mutableListOf<SportsEventProvider>()
-
-    @Synchronized
-    fun register(provider: SportsEventProvider) {
-        providers.removeAll { it.id == provider.id }
-        providers += provider
-    }
-
-    @Synchronized
-    fun registered(): List<String> = providers.sortedByDescending { it.priority }.map { it.id }
-
+    @Synchronized fun register(provider: SportsEventProvider) { providers.removeAll { it.id == provider.id }; providers += provider }
+    @Synchronized fun registered(): List<String> = providers.sortedByDescending { it.priority }.map { it.id }
     suspend fun loadAll(): List<SportsEvent> = coroutineScope {
-        val snapshot = synchronized(this@SportsProviderEngine) {
-            providers.sortedByDescending { it.priority }.toList()
-        }
-        snapshot.map { provider: SportsEventProvider ->
-            async(Dispatchers.IO) {
-                runCatching { provider.load() }.getOrElse { emptyList<SportsEvent>() }
-            }
-        }.awaitAll().flatten()
+        val snapshot = synchronized(this@SportsProviderEngine) { providers.sortedByDescending { it.priority }.toList() }
+        snapshot.map { provider -> async(Dispatchers.IO) { runCatching { provider.load() }.getOrElse { emptyList() } } }.awaitAll().flatten()
     }
 }
 
@@ -56,5 +41,15 @@ object DefaultSportsProviders {
         })
         SportsProviderEngine.register(NativeLeagueAdapters.Mlb)
         SportsProviderEngine.register(NativeLeagueAdapters.Nhl)
+        SportsProviderEngine.register(object : SportsEventProvider {
+            override val id = "sportspuff-federation"
+            override val priority = 80
+            override suspend fun load(): List<SportsEvent> = SportsFederation.loadToday()
+        })
+        SportsProviderEngine.register(object : SportsEventProvider {
+            override val id = "wwe-first-party"
+            override val priority = 85
+            override suspend fun load(): List<SportsEvent> = WweSchedule.load()
+        })
     }
 }
