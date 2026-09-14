@@ -1,10 +1,7 @@
 package com.usportz.app
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
-/** Wave 3: sport-neutral game center, delta state and My Teams primitives. */
 data class GameCenterSnapshot(
     val event: SportsEvent,
     val scores: List<Int> = emptyList(),
@@ -20,12 +17,7 @@ data class SportsDelta(val eventId: String, val changed: Boolean, val snapshot: 
 
 object SportsLiveDeltaEngine {
     private val snapshots = ConcurrentHashMap<String, GameCenterSnapshot>()
-
-    fun apply(next: List<GameCenterSnapshot>): List<SportsDelta> = next.map { value ->
-        val old = snapshots.put(value.event.id, value)
-        SportsDelta(value.event.id, old != value, value)
-    }
-
+    fun apply(next: List<GameCenterSnapshot>): List<SportsDelta> = next.map { value -> SportsDelta(value.event.id, snapshots.put(value.event.id, value) != value, value) }
     fun get(eventId: String): GameCenterSnapshot? = snapshots[eventId]
 }
 
@@ -39,7 +31,6 @@ object TeamHubEngine {
     }
 }
 
-/** Wave 4: multiview/timeshift state contracts. The player remains Media3-backed. */
 data class MultiViewSlot(val slot: Int, val event: SportsEvent?, val channel: SportsChannel?, val muted: Boolean = slot != 0)
 data class TimeShiftWindow(val enabled: Boolean, val durationMs: Long = 0L, val positionMs: Long = 0L, val seekable: Boolean = false)
 data class MiniPlayerState(val visible: Boolean = false, val event: SportsEvent? = null, val channel: SportsChannel? = null)
@@ -47,27 +38,35 @@ data class MiniPlayerState(val visible: Boolean = false, val event: SportsEvent?
 object SportsPlaybackExperience {
     const val MAX_MULTIVIEW = 4
     const val MAX_TIMESHIFT_MS = 30 * 60 * 1000L
-
     fun clampSlots(slots: List<MultiViewSlot>): List<MultiViewSlot> = slots.take(MAX_MULTIVIEW).mapIndexed { i, slot -> slot.copy(slot = i) }
     fun normalizeTimeshift(window: TimeShiftWindow): TimeShiftWindow = window.copy(durationMs = window.durationMs.coerceIn(0L, MAX_TIMESHIFT_MS), positionMs = window.positionMs.coerceIn(0L, window.durationMs.coerceAtMost(MAX_TIMESHIFT_MS)))
 }
 
-/** Wave 5: adapters expose a common deep-detail surface without forcing every league into one schema. */
 interface DeepLeagueAdapter {
     val league: String
     suspend fun snapshot(event: SportsEvent): GameCenterSnapshot
 }
 
 object DeepLeagueAdapters {
-    val MLB = adapter("MLB") { event -> SportsGameDetailService.load(event) }
-    val NHL = adapter("NHL") { event -> NativeLeagueAdapters.Nhl.snapshot(event) }
-    val NBA = adapter("NBA") { event -> SportsGameDetailService.load(event) }
-    val Soccer = adapter("SOCCER") { event -> SportsGameDetailService.load(event) }
-    val Tennis = adapter("TENNIS") { event -> SportsGameDetailService.load(event) }
-    val F1 = adapter("F1") { event -> SportsGameDetailService.load(event) }
+    val MLB = adapter("MLB")
+    val NHL = adapter("NHL")
+    val NBA = adapter("NBA")
+    val Soccer = adapter("SOCCER")
+    val Tennis = adapter("TENNIS")
+    val F1 = adapter("F1")
 
-    private fun adapter(name: String, loader: suspend (SportsEvent) -> GameCenterSnapshot): DeepLeagueAdapter = object : DeepLeagueAdapter {
-        override val league: String = name
-        override suspend fun snapshot(event: SportsEvent): GameCenterSnapshot = runCatching { loader(event) }.getOrElse { GameCenterSnapshot(event) }
+    private fun adapter(name: String) = object : DeepLeagueAdapter {
+        override val league = name
+        override suspend fun snapshot(event: SportsEvent): GameCenterSnapshot {
+            val detail = SportsGameDetailService.load(event)
+            return if (detail == null) GameCenterSnapshot(event) else GameCenterSnapshot(
+                event = event,
+                scores = listOf(detail.awayScore.toIntOrNull() ?: 0, detail.homeScore.toIntOrNull() ?: 0),
+                period = detail.periodLabels.lastOrNull().orEmpty(),
+                statusDetail = detail.situation.ifBlank { event.detail },
+                venue = detail.venue,
+                broadcasters = detail.broadcasts
+            )
+        }
     }
 }
