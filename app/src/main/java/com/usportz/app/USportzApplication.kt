@@ -5,11 +5,12 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.SvgDecoder
 
-/** Shared app services: image loading, persistent channel identity, and sports provider registry. */
+/** Shared app services: image loading, persistent channel identity, sports providers, and event intelligence. */
 class USportzApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         ChannelDnaRuntime.init(this)
+        SportsRuntimeV2.init(this)
         DefaultSportsProviders.install()
         SportsExpansionProviders.BallDontLie.let { SportsProviderEngine.register(it) }
         SportsExpansionProviders.PwhlLeagueStat.let { SportsProviderEngine.register(it) }
