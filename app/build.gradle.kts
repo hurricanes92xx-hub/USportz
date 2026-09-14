@@ -8,6 +8,10 @@ android {
     namespace = "com.usportz.app"
     compileSdk = 35
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "com.usportz.app"
         minSdk = 23
