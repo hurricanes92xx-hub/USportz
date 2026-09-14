@@ -8,9 +8,7 @@ android {
     namespace = "com.usportz.app"
     compileSdk = 35
 
-    buildFeatures {
-        buildConfig = true
-    }
+    buildFeatures { buildConfig = true }
 
     defaultConfig {
         applicationId = "com.usportz.app"
@@ -19,10 +17,19 @@ android {
         versionCode = 2
         versionName = "1.0.1"
 
-        val ncaaBase = project.findProperty("NCAA_API_BASE_URL")?.toString()?.trim()?.ifBlank { "https://ncaa-api.henrygd.me" } ?: "https://ncaa-api.henrygd.me"
-        val ncaaKey = project.findProperty("NCAA_API_KEY")?.toString()?.trim().orEmpty()
-        buildConfigField("String", "NCAA_API_BASE_URL", "\"${ncaaBase.replace("\"", "\\\"")}\"")
-        buildConfigField("String", "NCAA_API_KEY", "\"${ncaaKey.replace("\"", "\\\"")}\"")
+        fun prop(name: String, fallback: String = "") = project.findProperty(name)?.toString()?.trim()?.ifBlank { fallback } ?: fallback
+        fun quote(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\"
+
+        val ncaaBase = prop("NCAA_API_BASE_URL", "https://ncaa-api.henrygd.me")
+        val ncaaKey = prop("NCAA_API_KEY")
+        val bdlKey = prop("BALLDONTLIE_API_KEY")
+        val sportsDataverseUrl = prop("SPORTSDATAVERSE_URL")
+        val pwhlLeagueStatUrl = prop("PWHL_LEAGUESTAT_URL")
+        buildConfigField("String", "NCAA_API_BASE_URL", quote(ncaaBase))
+        buildConfigField("String", "NCAA_API_KEY", quote(ncaaKey))
+        buildConfigField("String", "BALLDONTLIE_API_KEY", quote(bdlKey))
+        buildConfigField("String", "SPORTSDATAVERSE_URL", quote(sportsDataverseUrl))
+        buildConfigField("String", "PWHL_LEAGUESTAT_URL", quote(pwhlLeagueStatUrl))
     }
 
     buildTypes {
@@ -37,7 +44,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
     kotlinOptions { jvmTarget = "17" }
 }
 
