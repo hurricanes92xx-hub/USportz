@@ -17,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -99,13 +101,25 @@ object SportsStreamPreloadManager {
                 val events = eventsDeferred.await()
                 val now = System.currentTimeMillis()
                 val candidates = events.asSequence()
-                    .filter { event ->
-                        val start = runCatching { java.time.Instant.parse(event.startTime).toEpochMilli() }.getOrNull()
-                        event.state == "in" || (start != null && start >= now && start <= now + 6 * 60 * 60 * 1000L)
+                    .mapNotNull { event ->
+                        val start = parseEpoch(event.startTime)
+                        val live = event.state.equals("in", ignoreCase = true)
+                        val upcoming = start != null && start >= now && start <= now + 6 * 60 * 60 * 1000L
+                        if (!live && !upcoming) return@mapNotNull null
+                        val priority = when {
+                            live -> 0
+                            start != null -> 1
+                            else -> 2
+                        }
+                        Triple(priority, start ?: Long.MAX_VALUE, event)
                     }
-                    .take(8)
-                    .mapNotNull { event -> SportsResolver.resolve(event, channels, 1).firstOrNull()?.channel }
-                    .distinctBy { it.url }
+                    // TIVRA-style behavior: live games always outrank merely upcoming games,
+                    // then the soonest starts win. This prevents a long schedule list from
+                    // starving a currently-live game during app startup.
+                    .sortedWith(compareBy<Triple<Int, Long, SportsEvent>> { it.first }.thenBy { it.second })
+                    .take(16)
+                    .mapNotNull { (_, _, event) -> SportsResolver.resolve(event, channels, 1).firstOrNull()?.channel }
+                    .distinctBy { it.url.trim().lowercase() }
                     .take(MAX_PRELOAD_ITEMS)
                     .toList()
                 if (candidates.isNotEmpty()) warm(app, candidates)
@@ -171,4 +185,9 @@ object SportsStreamPreloadManager {
             .setEnableDecoderFallback(true)
         return builder.buildExoPlayer(ExoPlayer.Builder(context, renderers))
     }
+
+    private fun parseEpoch(value: String): Long? =
+        runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+            ?: runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrNull()
+            ?: value.toLongOrNull()?.let { if (it < 10_000_000_000L) it * 1000 else it }
 }
