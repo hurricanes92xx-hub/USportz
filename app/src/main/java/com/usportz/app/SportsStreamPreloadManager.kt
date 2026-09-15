@@ -98,12 +98,19 @@ object SportsStreamPreloadManager {
         manager.invalidate()
     }
 
-    /** Returns the preloaded MediaSource when the URL is currently tracked; otherwise null. */
+    /** Returns a managed/preloaded MediaSource; if this is a cold tap, it is added immediately. */
     fun mediaSource(context: Context, url: String): MediaSource? {
         if (Looper.myLooper() != Looper.getMainLooper()) return null
-        ensure(context)
-        if (!urls.contains(url)) return null
-        return managerRef.get()?.getMediaSource(MediaItem.fromUri(url))
+        val clean = url.trim()
+        if (clean.isBlank()) return null
+        val manager = ensure(context)
+        if (!urls.contains(clean)) {
+            manager.add(MediaItem.fromUri(clean), 0)
+            urls.add(clean)
+            status.currentIndex = 0
+            manager.invalidate()
+        }
+        return manager.getMediaSource(MediaItem.fromUri(clean))
     }
 
     fun setCurrentPlayingUrl(url: String) {
