@@ -9,6 +9,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
 import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
@@ -34,16 +35,26 @@ object SportsStreamPreloadManager {
     private const val CONNECT_TIMEOUT_MS = 5_000
     private const val READ_TIMEOUT_MS = 12_000
 
-    private class StatusControl : TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus> {
+    /** Media3 1.5.x uses TargetPreloadStatusControl.PreloadStatus/DefaultPreloadManager.Status. */
+    private class StatusControl : TargetPreloadStatusControl<Int> {
         @Volatile var currentIndex: Int = 0
-        override fun getTargetPreloadStatus(index: Int): DefaultPreloadManager.PreloadStatus {
+
+        override fun getTargetPreloadStatus(index: Int): TargetPreloadStatusControl.PreloadStatus {
             val distance = kotlin.math.abs(index - currentIndex)
             return when {
-                distance == 0 -> DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(HOT_BUFFER_MS)
-                distance == 1 -> DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(HOT_BUFFER_MS)
-                distance <= 2 -> DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_TRACKS_SELECTED
-                distance <= 4 -> DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_SOURCE_PREPARED
-                else -> DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_NOT_PRELOADED
+                distance <= 1 -> DefaultPreloadManager.Status(
+                    DefaultPreloadManager.Status.STAGE_LOADED_FOR_DURATION_MS,
+                    HOT_BUFFER_MS
+                )
+                distance <= 2 -> DefaultPreloadManager.Status(
+                    DefaultPreloadManager.Status.STAGE_TRACKS_SELECTED
+                )
+                distance <= 4 -> DefaultPreloadManager.Status(
+                    DefaultPreloadManager.Status.STAGE_SOURCE_PREPARED
+                )
+                else -> DefaultPreloadManager.Status(
+                    DefaultPreloadManager.Status.STAGE_SOURCE_PREPARED
+                )
             }
         }
     }
@@ -66,6 +77,7 @@ object SportsStreamPreloadManager {
                 .setReadTimeoutMs(READ_TIMEOUT_MS)
                 .setAllowCrossProtocolRedirects(true)
                 .setUserAgent("USPortz/2.0")
+            val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(1_500, 12_000, 800, 1_500)
                 .setPrioritizeTimeOverSizeThresholds(true)
@@ -74,10 +86,12 @@ object SportsStreamPreloadManager {
                 .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                 .setEnableDecoderFallback(true)
             val builder = DefaultPreloadManager.Builder(app, status)
-                .setDataSourceFactory(dataSourceFactory)
+                .setMediaSourceFactory(mediaSourceFactory)
                 .setLoadControl(loadControl)
                 .setRenderersFactory(renderers)
-                .setBandwidthMeter(androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(app))
+                .setBandwidthMeter(
+                    androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(app)
+                )
             val manager = builder.build()
             builderRef.set(builder)
             managerRef.set(manager)
@@ -96,7 +110,9 @@ object SportsStreamPreloadManager {
         bootstrapScope.launch {
             runCatching {
                 val channelsDeferred = async { SportsChannelBridge.load(app, false) }
-                val eventsDeferred = async { (SportsSchedule.load(false) + MonsterJamSchedule.load()).distinctBy { it.id } }
+                val eventsDeferred = async {
+                    (SportsSchedule.load(false) + MonsterJamSchedule.load()).distinctBy { it.id }
+                }
                 val channels = channelsDeferred.await()
                 val events = eventsDeferred.await()
                 val now = System.currentTimeMillis()
@@ -113,12 +129,11 @@ object SportsStreamPreloadManager {
                         }
                         Triple(priority, start ?: Long.MAX_VALUE, event)
                     }
-                    // TIVRA-style behavior: live games always outrank merely upcoming games,
-                    // then the soonest starts win. This prevents a long schedule list from
-                    // starving a currently-live game during app startup.
                     .sortedWith(compareBy<Triple<Int, Long, SportsEvent>> { it.first }.thenBy { it.second })
                     .take(16)
-                    .mapNotNull { (_, _, event) -> SportsResolver.resolve(event, channels, 1).firstOrNull()?.channel }
+                    .mapNotNull { (_, _, event) ->
+                        SportsResolver.resolve(event, channels, 1).firstOrNull()?.channel
+                    }
                     .distinctBy { it.url.trim().lowercase() }
                     .take(MAX_PRELOAD_ITEMS)
                     .toList()
@@ -180,10 +195,7 @@ object SportsStreamPreloadManager {
     /** The player must be created from the same builder as the preload manager. */
     fun buildPlayer(context: Context): ExoPlayer {
         val builder = builderRef.get() ?: ensure(context).let { builderRef.get()!! }
-        val renderers = DefaultRenderersFactory(context.applicationContext)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-            .setEnableDecoderFallback(true)
-        return builder.buildExoPlayer(ExoPlayer.Builder(context, renderers))
+        return builder.buildExoPlayer(ExoPlayer.Builder(context))
     }
 
     private fun parseEpoch(value: String): Long? =
