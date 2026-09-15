@@ -12,6 +12,12 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
 import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -45,6 +51,8 @@ object SportsStreamPreloadManager {
     private val builderRef = AtomicReference<DefaultPreloadManager.Builder?>()
     private val status = StatusControl()
     private val urls = LinkedHashSet<String>()
+    private val bootstrapScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val bootstrapped = AtomicBoolean(false)
 
     private fun ensure(context: Context): DefaultPreloadManager {
         managerRef.get()?.let { return it }
@@ -72,6 +80,36 @@ object SportsStreamPreloadManager {
             builderRef.set(builder)
             managerRef.set(manager)
             return manager
+        }
+    }
+
+    /**
+     * Starts a non-blocking startup prewarm using the already-cached catalogue and schedule.
+     * If no cached catalogue exists, SportsChannelBridge performs its normal background refresh;
+     * this routine never waits for the full provider catalogue before the first UI is drawn.
+     */
+    fun bootstrap(context: Context) {
+        if (!bootstrapped.compareAndSet(false, true)) return
+        val app = context.applicationContext
+        bootstrapScope.launch {
+            runCatching {
+                val channelsDeferred = async { SportsChannelBridge.load(app, false) }
+                val eventsDeferred = async { (SportsSchedule.load(false) + MonsterJamSchedule.load()).distinctBy { it.id } }
+                val channels = channelsDeferred.await()
+                val events = eventsDeferred.await()
+                val now = System.currentTimeMillis()
+                val candidates = events.asSequence()
+                    .filter { event ->
+                        val start = runCatching { java.time.Instant.parse(event.startTime).toEpochMilli() }.getOrNull()
+                        event.state == "in" || (start != null && start >= now && start <= now + 6 * 60 * 60 * 1000L)
+                    }
+                    .take(8)
+                    .mapNotNull { event -> SportsResolver.resolve(event, channels, 1).firstOrNull()?.channel }
+                    .distinctBy { it.url }
+                    .take(MAX_PRELOAD_ITEMS)
+                    .toList()
+                if (candidates.isNotEmpty()) warm(app, candidates)
+            }
         }
     }
 
