@@ -90,6 +90,18 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
             statement.close()
             db.endTransaction()
         }
+
+        // Critical large-playlist optimization: the streaming importer is already reading the
+        // provider response. Publish the first sports rows from that same pass instead of
+        // making the user wait for all 57k+ channels or starting a second provider request.
+        runCatching {
+            val preview = SportsStartupPreviewStore(appContext)
+            val existing = preview.read(sourceKey, 240).size
+            if (existing < 240) {
+                val candidates = batch.filter { SportsNetworkCatalog.isSportsChannel(it) }.take(240 - existing)
+                if (candidates.isNotEmpty()) preview.append(sourceKey, existing, candidates)
+            }
+        }
     }
 
     /** Atomically publishes only a fully parsed generation. The previous complete generation survives any failed refresh. */
