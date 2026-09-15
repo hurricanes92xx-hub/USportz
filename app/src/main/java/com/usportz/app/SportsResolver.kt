@@ -1,16 +1,9 @@
 package com.usportz.app
 
 /**
- * Event -> IPTV resolver. Uses cheap indexed candidate retrieval first, then
- * identity/network/league scoring. Results are collapsed into stream families.
- * Provider health is deliberately a secondary signal: a temporarily bad
- * channel should lose priority, not make a valid event disappear.
- *
- * Confidence hierarchy:
- *  - Tier 1: both teams, or a verified broadcast/network identity.
- *  - Tier 2: one team plus strong league/network evidence.
- *  - Tier 3: generic league/sport/event-feed channels, never allowed to
- *    outrank a channel carrying a concrete team or exact broadcaster match.
+ * Event -> IPTV resolver. Uses the complete in-memory sports projection when
+ * available, falling back to disk-side indexed retrieval only during cold start.
+ * Results are cached and single-flighted per event + catalogue generation.
  */
 object SportsResolver {
     data class WatchSource(val channel: SportsChannel, val score: Int, val reasons: List<String>)
@@ -20,9 +13,11 @@ object SportsResolver {
     private val regionWords = setOf("east", "west", "central", "coast", "north", "south", "backup", "alt", "alternate", "feed", "us", "usa", "ca", "canada", "cl", "nl", "uk", "il", "it")
     private val noiseWords = setOf("news", "weather", "music", "kids", "movie", "movies", "entertainment")
 
-    fun resolve(event: SportsEvent, channels: List<SportsChannel>, limit: Int = 8): List<WatchSource> {
-        val indexed = runCatching { SportsChannelBridge.indexedCandidates(event, INDEX_LIMIT) }.getOrDefault(emptyList())
-        val working = (indexed + channels).distinctBy { "${it.id}|${it.url}" }
+    fun resolve(event: SportsEvent, channels: List<SportsChannel>, limit: Int = 8): List<WatchSource> = SportsResolutionCache.getOrResolve(event, channels, limit)
+
+    internal fun resolveUncached(event: SportsEvent, channels: List<SportsChannel>, limit: Int = 8): List<WatchSource> {
+        val indexed = if (channels.isEmpty()) runCatching { SportsChannelBridge.indexedCandidates(event, INDEX_LIMIT) }.getOrDefault(emptyList()) else emptyList()
+        val working = (channels + indexed).distinctBy { "${it.id}|${it.url}" }
         if (working.isEmpty()) return emptyList()
         val now = System.currentTimeMillis()
         return working.asSequence()
