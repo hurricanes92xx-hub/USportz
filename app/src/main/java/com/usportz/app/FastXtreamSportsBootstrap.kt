@@ -59,14 +59,17 @@ object FastXtreamSportsBootstrap {
         }
 
         // Fetch category endpoints concurrently, but stream each response directly into SQLite.
-        // This keeps peak RAM bounded and avoids the provider's slow uncategorized mega-response.
-        val categoryResults = coroutineScope {
+        // Publish a tiny first batch as soon as it is available; do not wait for the 1000-row
+        // durability batch. The full catalogue can keep importing behind the live sports UI.
+        coroutineScope {
             selected.map { category ->
                 async(Dispatchers.IO.limitedParallelism(CATEGORY_CONCURRENCY)) {
                     streamCategoryStreams(base, user, pass, category) { channel ->
                         synchronized(pending) {
                             pending += channel
-                            if (pending.size >= BATCH_SIZE) flush()
+                            if (pending.size >= BATCH_SIZE || (!published && pending.size >= FIRST_PUBLISH_SIZE)) {
+                                flush()
+                            }
                         }
                     }
                 }
