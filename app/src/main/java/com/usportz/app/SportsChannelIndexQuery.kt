@@ -1,7 +1,7 @@
 package com.usportz.app
 
 import android.content.Context
-import android.database.sqlite.SQLiteOpenHelper
+import android.database.sqlite.SQLiteDatabase
 
 /** Disk-side access to the complete channel index without loading every row into Compose. */
 object SportsChannelIndexQuery {
@@ -9,19 +9,23 @@ object SportsChannelIndexQuery {
         val max = limit.coerceIn(1, 600)
         val out = ArrayList<SportsChannel>(max)
         val seen = HashSet<String>()
-        val db = Helper(context).readableDatabase
-        val safeTerms = terms.map(::normalize).filter { it.length >= 3 }.distinct().take(12)
-        val base = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation WHERE c.source_key=?"
-        if (safeTerms.isNotEmpty()) {
-            val clauses = safeTerms.joinToString(" OR ") { "(LOWER(c.name) LIKE ? OR LOWER(c.tvg_name) LIKE ? OR LOWER(c.tvg_id) LIKE ? OR LOWER(c.grp) LIKE ? OR LOWER(c.category) LIKE ? OR LOWER(c.provider) LIKE ?)" }
-            val args = ArrayList<String>(1 + safeTerms.size * 6)
-            args += sourceKey
-            safeTerms.forEach { term -> val p = "%$term%"; repeat(6) { args += p } }
-            db.rawQuery("$base AND ($clauses) ORDER BY c.is_sports DESC, c.name COLLATE NOCASE LIMIT $max", args.toTypedArray()).use { c -> while (c.moveToNext()) add(c, out, seen) }
-        }
-        if (out.size < max) {
-            val remaining = max - out.size
-            db.rawQuery("$base AND c.is_sports=1 ORDER BY c.name COLLATE NOCASE LIMIT $remaining", arrayOf(sourceKey)).use { c -> while (c.moveToNext()) add(c, out, seen) }
+        val dbFile = context.applicationContext.getDatabasePath("usportz_channels.db")
+        if (!dbFile.exists()) return emptyList()
+        val db = runCatching { SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY) }.getOrNull() ?: return emptyList()
+        db.use {
+            val safeTerms = terms.map(::normalize).filter { it.length >= 3 }.distinct().take(12)
+            val base = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation WHERE c.source_key=?"
+            if (safeTerms.isNotEmpty()) {
+                val clauses = safeTerms.joinToString(" OR ") { "(LOWER(c.name) LIKE ? OR LOWER(c.tvg_name) LIKE ? OR LOWER(c.tvg_id) LIKE ? OR LOWER(c.grp) LIKE ? OR LOWER(c.category) LIKE ? OR LOWER(c.provider) LIKE ?)" }
+                val args = ArrayList<String>(1 + safeTerms.size * 6)
+                args += sourceKey
+                safeTerms.forEach { term -> val p = "%$term%"; repeat(6) { args += p } }
+                db.rawQuery("$base AND ($clauses) ORDER BY c.is_sports DESC, c.name COLLATE NOCASE LIMIT $max", args.toTypedArray()).use { c -> while (c.moveToNext()) add(c, out, seen) }
+            }
+            if (out.size < max) {
+                val remaining = max - out.size
+                db.rawQuery("$base AND c.is_sports=1 ORDER BY c.name COLLATE NOCASE LIMIT $remaining", arrayOf(sourceKey)).use { c -> while (c.moveToNext()) add(c, out, seen) }
+            }
         }
         return out
     }
@@ -33,9 +37,4 @@ object SportsChannelIndexQuery {
     }
 
     private fun normalize(value: String): String = value.lowercase().replace("&", " and ").replace("+", " plus ").replace(Regex("[^a-z0-9]+"), " ").trim().replace(Regex("\\s+"), " ")
-
-    private class Helper(context: Context) : SQLiteOpenHelper(context.applicationContext, "usportz_channels.db", null, 2) {
-        override fun onCreate(db: android.database.sqlite.SQLiteDatabase) = Unit
-        override fun onUpgrade(db: android.database.sqlite.SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
-    }
 }
