@@ -36,14 +36,16 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
         if (oldVersion < 6) db.execSQL("CREATE TABLE IF NOT EXISTS refresh_state (source_key TEXT PRIMARY KEY, generation INTEGER NOT NULL, imported_count INTEGER NOT NULL, expected_count INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)")
     }
 
-    /** Sports projection used by the matcher/UI. Falls back to the isolated cold-start preview only when no full snapshot exists. */
+    /** Sports projection used by the matcher/UI. The cold-start preview is merged even when an older full snapshot exists. */
     fun activeSnapshot(sourceKey: String): List<SportsChannel> {
         val out = ArrayList<SportsChannel>()
         readableDatabase.rawQuery("SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation AND m.complete=1 WHERE c.source_key=? AND c.is_sports=1 ORDER BY c.name COLLATE NOCASE", arrayOf(sourceKey)).use { cursor ->
             while (cursor.moveToNext()) out += SportsChannel(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3)?.ifBlank { null }, cursor.getString(4), cursor.getString(5), cursor.getString(6), cursor.getString(7), cursor.getString(8))
         }
-        if (out.isEmpty() && activeCount(sourceKey) == 0) return SportsStartupPreviewStore(appContext).read(sourceKey, 240)
-        return out
+        val preview = runCatching { SportsStartupPreviewStore(appContext).read(sourceKey, 240) }.getOrDefault(emptyList())
+        if (out.isEmpty()) return preview
+        if (preview.isEmpty()) return out
+        return (out + preview).distinctBy { "${it.id}|${it.url}" }
     }
 
     fun activeCount(sourceKey: String): Int = readableDatabase.rawQuery("SELECT channel_count FROM meta WHERE source_key=? AND complete=1", arrayOf(sourceKey)).use { if (it.moveToFirst()) it.getInt(0) else 0 }
@@ -87,16 +89,12 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
             db.endTransaction()
         }
 
-        // Keep the best North American sports window from the same streaming pass.
-        // This means U.S./Canadian networks and sports-event feeds can replace lower-value
-        // international sports rows even when they occur later in a 57k+ provider response.
         runCatching {
             val candidates = batch.filter { SportsNetworkCatalog.isSportsChannel(it) }
             if (candidates.isNotEmpty()) SportsStartupPreviewStore(appContext).mergeRanked(sourceKey, candidates)
         }
     }
 
-    /** Atomically publishes only a fully parsed generation. */
     fun activate(sourceKey: String, generation: Long, count: Int) {
         val db = writableDatabase
         var activated = false
