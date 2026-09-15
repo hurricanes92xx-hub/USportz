@@ -6,6 +6,9 @@ import android.util.JsonToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -18,6 +21,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.GZIPInputStream
 
 data class SportsChannel(val id: String, val name: String, val group: String, val logo: String?, val url: String, val tvgName: String = "", val tvgId: String = "", val category: String = "", val provider: String = "")
@@ -25,6 +29,8 @@ data class SportsChannel(val id: String, val name: String, val group: String, va
 object SportsChannelBridge {
     private const val CACHE_TTL_MS = 15 * 60 * 1000L
     private const val BATCH_SIZE = 2000
+    private const val CATEGORY_PARALLELISM = 6
+    private const val CATEGORY_READ_TIMEOUT_MS = 30_000
     @Volatile private var cached: List<SportsChannel> = emptyList()
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedSourceKey = ""
@@ -109,24 +115,38 @@ object SportsChannelBridge {
         try {
             val store = SportsChannelDiskStore(context)
             val generation = store.beginGeneration(sourceKey)
-            var count = 0
+            val imported = AtomicInteger(0)
             var completedResponse = false
             fun accept(channel: SportsChannel) {
-                pending += channel
-                count++
-                if (pending.size >= BATCH_SIZE) {
-                    flush(store, sourceKey, generation)
-                    store.updateRefreshProgress(sourceKey, generation, count)
+                synchronized(pending) {
+                    pending += channel
+                    val count = imported.incrementAndGet()
+                    if (pending.size >= BATCH_SIZE) {
+                        flush(store, sourceKey, generation)
+                        store.updateRefreshProgress(sourceKey, generation, count)
+                    }
                 }
             }
             pending.clear()
             if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
                 for (base in normalizedServerCandidates(server)) {
-                    val before = count
+                    val before = imported.get()
                     try {
                         val categories = fetchLiveCategories(base, user, pass)
+                        if (categories.isNotEmpty()) {
+                            val parsed = fetchLiveStreamsByCategoryParallel(base, user, pass, categories, ::accept)
+                            if (parsed > 0 || imported.get() > before) {
+                                completedResponse = true
+                                break
+                            }
+                        }
+                        // Some older providers do not return usable categories. Fall back to the
+                        // standard all-stream endpoint only in that case.
                         val parsed = fetchLiveStreamsStreaming(base, user, pass, categories, ::accept)
-                        if (parsed > 0 || count > before) { completedResponse = true; break }
+                        if (parsed > 0 || imported.get() > before) {
+                            completedResponse = true
+                            break
+                        }
                     } catch (_: Throwable) { }
                 }
                 if (!completedResponse) for (base in normalizedServerCandidates(server)) {
@@ -138,8 +158,9 @@ object SportsChannelBridge {
             } else if (playlist.isNotBlank()) {
                 completedResponse = runCatching { fetchM3uStreaming(playlist, ::accept) > 0 }.getOrDefault(false)
             }
+            val count = imported.get()
             if (completedResponse && count > 0) {
-                flush(store, sourceKey, generation)
+                synchronized(pending) { flush(store, sourceKey, generation) }
                 store.updateRefreshProgress(sourceKey, generation, count)
                 store.activate(sourceKey, generation, count)
                 val fresh = store.activeSnapshot(sourceKey)
@@ -150,10 +171,41 @@ object SportsChannelBridge {
                     cachedGeneration = generation
                 }
             }
-        } finally { pending.clear(); indexing.set(false) }
+        } finally { synchronized(pending) { pending.clear() }; indexing.set(false) }
     }
 
     private val pending = ArrayList<SportsChannel>(BATCH_SIZE)
+
+    private suspend fun fetchLiveStreamsByCategoryParallel(base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int = coroutineScope {
+        val limiter = Dispatchers.IO.limitedParallelism(CATEGORY_PARALLELISM)
+        categories.entries.map { entry ->
+            async(limiter) {
+                fetchLiveStreamsCategory(base, user, pass, entry.key, entry.value, sink)
+            }
+        }.awaitAll().sum()
+    }
+
+    private fun fetchLiveStreamsCategory(base: String, user: String, pass: String, categoryId: String, categoryName: String, sink: (SportsChannel) -> Unit): Int {
+        val query = "${credentialsQuery(user, pass)}&action=get_live_streams&category_id=${URLEncoder.encode(categoryId, "UTF-8")}"
+        for (endpoint in listOf("player_api.php", "panel_api.php")) {
+            val conn = runCatching { URL("$base/$endpoint?$query").openConnection() as HttpURLConnection }.getOrNull() ?: continue
+            try {
+                conn.connectTimeout = 4_500
+                conn.readTimeout = CATEGORY_READ_TIMEOUT_MS
+                conn.instanceFollowRedirects = true
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("Accept", "application/json, text/plain, */*")
+                conn.setRequestProperty("Accept-Encoding", "gzip")
+                conn.setRequestProperty("User-Agent", "USPortz/2.1 Android")
+                if (conn.responseCode !in 200..299) continue
+                return streamJson(openDecoded(conn), base, user, pass, mapOf(categoryId to categoryName), sink)
+            } catch (_: Throwable) {
+                // Try the alternate Xtream endpoint for this category.
+            } finally { conn.disconnect() }
+        }
+        return 0
+    }
+
     private fun flush(store: SportsChannelDiskStore, sourceKey: String, generation: Long) { if (pending.isNotEmpty()) { store.insertBatch(sourceKey, generation, pending.toList()); pending.clear() } }
     private fun fetchLiveCategories(base: String, user: String, pass: String): Map<String, String> { val query = "${credentialsQuery(user, pass)}&action=get_live_categories"; for (endpoint in listOf("player_api.php", "panel_api.php")) { val conn = runCatching { URL("$base/$endpoint?$query").openConnection() as HttpURLConnection }.getOrNull() ?: continue; try { conn.connectTimeout = 4_500; conn.readTimeout = 12_000; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"; conn.setRequestProperty("Accept", "application/json, text/plain, */*"); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USPortz/1.9"); if (conn.responseCode !in 200..299) continue; return parseCategoryNames(openDecoded(conn).bufferedReader().use { it.readText().take(2 * 1024 * 1024) }) } finally { conn.disconnect() } }; return emptyMap() }
     private fun parseCategoryNames(text: String): Map<String, String> { val out = HashMap<String, String>(); runCatching { val root = text.trim(); if (root.startsWith("[")) { val array = org.json.JSONArray(root); for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val id = item.optString("category_id").ifBlank { item.optString("id") }; val name = item.optString("category_name").ifBlank { item.optString("name") }; if (id.isNotBlank() && name.isNotBlank()) out[id] = name } } else { val obj = JSONObject(root); val array = obj.optJSONArray("categories") ?: obj.optJSONArray("data") ?: return@runCatching; for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val id = item.optString("category_id").ifBlank { item.optString("id") }; val name = item.optString("category_name").ifBlank { item.optString("name") }; if (id.isNotBlank() && name.isNotBlank()) out[id] = name } } }; return out }
