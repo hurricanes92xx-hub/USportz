@@ -151,7 +151,8 @@ object SportsResolver {
     private fun tokenMatch(haystack: String, needle: String): Boolean {
         val h = normalize(haystack); val n = normalize(needle)
         if (n.isBlank()) return false
-        return h == n || h.contains(" $n ") || h.startsWith("$n ") || h.endsWith(" $n")
+        val padded = " $h "
+        return h == n || padded.contains(" $n ")
     }
     private fun normalize(v: String): String = SportsBroadcasts.normalize(v)
     private fun compact(v: String): String = v.filter(Char::isLetterOrDigit)
