@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -31,6 +32,7 @@ object SportsChannelBridge {
     private const val BATCH_SIZE = 2000
     private const val CATEGORY_PARALLELISM = 6
     private const val CATEGORY_READ_TIMEOUT_MS = 30_000
+    private const val PREVIEW_WAIT_MS = 5_000L
     @Volatile private var cached: List<SportsChannel> = emptyList()
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedSourceKey = ""
@@ -93,12 +95,28 @@ object SportsChannelBridge {
         val playlist = source.playlist
         val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
         val store = SportsChannelDiskStore(context)
-        val diskSnapshot = runCatching { store.activeSnapshot(sourceKey) }.getOrDefault(emptyList())
+        var diskSnapshot = runCatching { store.activeSnapshot(sourceKey) }.getOrDefault(emptyList())
         if (diskSnapshot.isNotEmpty() && (cachedSourceKey != sourceKey || cached.isEmpty())) {
             cached = diskSnapshot
             cachedAt = System.currentTimeMillis()
             cachedSourceKey = sourceKey
             cachedGeneration = store.activeGeneration(sourceKey)
+        }
+        // On a cold launch the application may be writing the isolated sports preview at the
+        // same time that the activity asks for its first snapshot. Wait only a few seconds for
+        // that small preview; never wait for the full 57k+ provider catalogue.
+        if (diskSnapshot.isEmpty() && (FastXtreamSportsBootstrap.isRunning() || indexing.get())) {
+            val deadline = System.currentTimeMillis() + PREVIEW_WAIT_MS
+            while (diskSnapshot.isEmpty() && System.currentTimeMillis() < deadline) {
+                delay(250)
+                diskSnapshot = runCatching { store.activeSnapshot(sourceKey) }.getOrDefault(emptyList())
+            }
+            if (diskSnapshot.isNotEmpty() && cachedSourceKey != sourceKey) {
+                cached = diskSnapshot
+                cachedAt = System.currentTimeMillis()
+                cachedSourceKey = sourceKey
+                cachedGeneration = store.activeGeneration(sourceKey)
+            }
         }
         if (forceRefresh) {
             if (!indexing.get()) refreshScope.launch { refreshInternal(context, server, user, pass, playlist, sourceKey) }
@@ -132,22 +150,28 @@ object SportsChannelBridge {
                 for (base in normalizedServerCandidates(server)) {
                     val before = imported.get()
                     try {
-                        val categories = fetchLiveCategories(base, user, pass)
-                        if (categories.isNotEmpty()) {
-                            val parsed = fetchLiveStreamsByCategoryParallel(base, user, pass, categories, ::accept)
-                            if (parsed > 0 || imported.get() > before) {
-                                completedResponse = true
-                                break
-                            }
-                        }
-                        // Some older providers do not return usable categories. Fall back to the
-                        // standard all-stream endpoint only in that case.
-                        val parsed = fetchLiveStreamsStreaming(base, user, pass, categories, ::accept)
-                        if (parsed > 0 || imported.get() > before) {
+                        // Large Xtream providers are usually fastest through the single
+                        // uncategorized live-stream endpoint. Parse it incrementally so the
+                        // 57k+ response never becomes one giant String/JSON tree.
+                        val allParsed = fetchLiveStreamsStreaming(base, user, pass, emptyMap(), ::accept)
+                        if (allParsed > 0 || imported.get() > before) {
                             completedResponse = true
                             break
                         }
-                    } catch (_: Throwable) { }
+                    } catch (_: Throwable) {
+                        // A provider may reject/timeout the large endpoint. In that case fall
+                        // back to category requests rather than blocking startup forever.
+                        try {
+                            val categories = fetchLiveCategories(base, user, pass)
+                            if (categories.isNotEmpty()) {
+                                val parsed = fetchLiveStreamsByCategoryParallel(base, user, pass, categories, ::accept)
+                                if (parsed > 0 || imported.get() > before) {
+                                    completedResponse = true
+                                    break
+                                }
+                            }
+                        } catch (_: Throwable) { }
+                    }
                 }
                 if (!completedResponse) for (base in normalizedServerCandidates(server)) {
                     try {
