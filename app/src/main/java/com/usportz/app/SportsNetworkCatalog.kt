@@ -50,7 +50,10 @@ object SportsNetworkCatalog {
     private val sportsCategoryWords = listOf("sport", "sports", "sports tv", "sports television", "live sports", "us sports", "usa sports", "sports hd", "sports fhd", "sports 4k", "ppv", "live events", "events")
 
     fun find(channel: SportsChannel): SportsNetwork? {
-        val haystack = normalize(listOf(channel.name, channel.tvgName, channel.tvgId, channel.group, channel.category, channel.provider).joinToString(" "))
+        // Network identity should come from the channel identity fields, not a
+        // broad category/provider label. Otherwise every channel in a category
+        // named "USA" could be misclassified as USA Network.
+        val haystack = normalize(listOf(channel.name, channel.tvgName, channel.tvgId).joinToString(" "))
         return networks.firstOrNull { network -> network.aliases.any { alias -> matchesAlias(haystack, normalize(alias)) } }
     }
 
