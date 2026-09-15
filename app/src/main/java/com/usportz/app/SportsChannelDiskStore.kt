@@ -55,7 +55,10 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
     /** Starts an isolated generation. It never touches the active complete generation. */
     fun beginGeneration(sourceKey: String): Long {
         val generation = System.currentTimeMillis()
-        val expected = activeCount(sourceKey)
+        // Xtream does not provide a reliable total for the streaming import. Never use the
+        // previous active count as a fake "expected" value (e.g. 4,000/24,000) while a
+        // 57k+ catalogue is actually being read. Keep expected=0 until a real total exists.
+        val expected = 0
         writableDatabase.execSQL("INSERT OR REPLACE INTO refresh_state(source_key,generation,imported_count,expected_count,updated_at) VALUES(?,?,?,?,?)", arrayOf(sourceKey, generation, 0, expected, System.currentTimeMillis()))
         return generation
     }
