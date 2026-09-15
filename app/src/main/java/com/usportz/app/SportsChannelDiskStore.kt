@@ -42,24 +42,17 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
         readableDatabase.rawQuery("SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation AND m.complete=1 WHERE c.source_key=? AND c.is_sports=1 ORDER BY c.name COLLATE NOCASE", arrayOf(sourceKey)).use { cursor ->
             while (cursor.moveToNext()) out += SportsChannel(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3)?.ifBlank { null }, cursor.getString(4), cursor.getString(5), cursor.getString(6), cursor.getString(7), cursor.getString(8))
         }
-        if (out.isEmpty() && activeCount(sourceKey) == 0) {
-            return SportsStartupPreviewStore(appContext).read(sourceKey, 240)
-        }
+        if (out.isEmpty() && activeCount(sourceKey) == 0) return SportsStartupPreviewStore(appContext).read(sourceKey, 240)
         return out
     }
 
-    /** Full provider count, including non-sports IPTV channels. */
     fun activeCount(sourceKey: String): Int = readableDatabase.rawQuery("SELECT channel_count FROM meta WHERE source_key=? AND complete=1", arrayOf(sourceKey)).use { if (it.moveToFirst()) it.getInt(0) else 0 }
     fun activeGeneration(sourceKey: String): Long = readableDatabase.rawQuery("SELECT active_generation FROM meta WHERE source_key=? AND complete=1", arrayOf(sourceKey)).use { if (it.moveToFirst()) it.getLong(0) else 0L }
 
-    /** Starts an isolated generation. It never touches the active complete generation. */
+    /** Starts an isolated generation without inventing a provider total. */
     fun beginGeneration(sourceKey: String): Long {
         val generation = System.currentTimeMillis()
-        // Xtream does not provide a reliable total for the streaming import. Never use the
-        // previous active count as a fake "expected" value (e.g. 4,000/24,000) while a
-        // 57k+ catalogue is actually being read. Keep expected=0 until a real total exists.
-        val expected = 0
-        writableDatabase.execSQL("INSERT OR REPLACE INTO refresh_state(source_key,generation,imported_count,expected_count,updated_at) VALUES(?,?,?,?,?)", arrayOf(sourceKey, generation, 0, expected, System.currentTimeMillis()))
+        writableDatabase.execSQL("INSERT OR REPLACE INTO refresh_state(source_key,generation,imported_count,expected_count,updated_at) VALUES(?,?,?,?,?)", arrayOf(sourceKey, generation, 0, 0, System.currentTimeMillis()))
         return generation
     }
 
@@ -94,20 +87,16 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
             db.endTransaction()
         }
 
-        // Critical large-playlist optimization: the streaming importer is already reading the
-        // provider response. Publish the first sports rows from that same pass instead of
-        // making the user wait for all 57k+ channels or starting a second provider request.
+        // Keep the best North American sports window from the same streaming pass.
+        // This means U.S./Canadian networks and sports-event feeds can replace lower-value
+        // international sports rows even when they occur later in a 57k+ provider response.
         runCatching {
-            val preview = SportsStartupPreviewStore(appContext)
-            val existing = preview.read(sourceKey, 240).size
-            if (existing < 240) {
-                val candidates = batch.filter { SportsNetworkCatalog.isSportsChannel(it) }.take(240 - existing)
-                if (candidates.isNotEmpty()) preview.append(sourceKey, existing, candidates)
-            }
+            val candidates = batch.filter { SportsNetworkCatalog.isSportsChannel(it) }
+            if (candidates.isNotEmpty()) SportsStartupPreviewStore(appContext).mergeRanked(sourceKey, candidates)
         }
     }
 
-    /** Atomically publishes only a fully parsed generation. The previous complete generation survives any failed refresh. */
+    /** Atomically publishes only a fully parsed generation. */
     fun activate(sourceKey: String, generation: Long, count: Int) {
         val db = writableDatabase
         var activated = false
@@ -121,9 +110,7 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
                 db.setTransactionSuccessful()
                 activated = true
             }
-        } finally {
-            db.endTransaction()
-        }
+        } finally { db.endTransaction() }
         if (activated) runCatching { SportsStartupPreviewStore(appContext).clear(sourceKey) }
     }
 
@@ -134,9 +121,7 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
             writableDatabase.delete("meta", "source_key=?", arrayOf(sourceKey))
             writableDatabase.delete("refresh_state", "source_key=?", arrayOf(sourceKey))
             writableDatabase.setTransactionSuccessful()
-        } finally {
-            writableDatabase.endTransaction()
-        }
+        } finally { writableDatabase.endTransaction() }
         runCatching { SportsStartupPreviewStore(appContext).clear(sourceKey) }
     }
 }
