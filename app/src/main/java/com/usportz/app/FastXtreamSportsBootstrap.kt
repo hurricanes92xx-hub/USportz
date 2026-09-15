@@ -32,7 +32,7 @@ object FastXtreamSportsBootstrap {
 
     fun isRunning(): Boolean = running.get()
 
-    suspend fun bootstrap(context: Context, server: String, user: String, pass: String): Int = withContext(Dispatchers.IO) {
+    suspend fun bootstrap(context: Context, server: String, user: String, pass: String, playlist: String = ""): Int = withContext(Dispatchers.IO) {
         if (!running.compareAndSet(false, true)) return@withContext 0
         try {
             val base = SportsChannelBridge.normalizeXtreamServer(server)
@@ -50,7 +50,7 @@ object FastXtreamSportsBootstrap {
             // The preview has its own tiny database. This is the critical separation from
             // the full 57k+ catalogue: publishing 48 sports rows can never replace the
             // previous complete provider generation.
-            val sourceKey = sha256("$base\u0000$user\u0000$pass\u0000")
+            val sourceKey = sha256("$base\u0000$user\u0000$pass\u0000$playlist")
             val store = SportsStartupPreviewStore(context)
             store.clear(sourceKey)
             var total = 0
