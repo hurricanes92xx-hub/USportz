@@ -25,16 +25,23 @@ data class SportsChannel(val id: String, val name: String, val group: String, va
 object SportsChannelBridge {
     private const val CACHE_TTL_MS = 15 * 60 * 1000L
     private const val BATCH_SIZE = 2000
-    private const val FIRST_PUBLISH_SIZE = 256
     @Volatile private var cached: List<SportsChannel> = emptyList()
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedSourceKey = ""
+    @Volatile private var cachedGeneration = 0L
     @Volatile private var appContext: Context? = null
     private val indexing = AtomicBoolean(false)
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun restoreCached(context: Context): List<SportsChannel> = cached
     fun currentSourceKey(): String = cachedSourceKey
+    fun currentCatalogGeneration(): Long = cachedGeneration
+    fun refreshProgress(context: Context): CatalogRefreshProgress? {
+        val source = SourceStore(context)
+        val server = normalizeXtreamServer(source.server)
+        val sourceKey = sha256("$server\u0000${source.user}\u0000${source.pass}\u0000${source.playlist}")
+        return runCatching { SportsChannelDiskStore(context).refreshProgress(sourceKey) }.getOrNull()
+    }
 
     fun indexedCandidates(event: SportsEvent, limit: Int = 1200): List<SportsChannel> {
         val context = appContext ?: return emptyList()
@@ -73,63 +80,75 @@ object SportsChannelBridge {
 
     suspend fun load(context: Context, forceRefresh: Boolean = false): List<SportsChannel> = withContext(Dispatchers.IO) {
         appContext = context.applicationContext
-        val source = SourceStore(context); val server = normalizeXtreamServer(source.server); val user = source.user; val pass = source.pass; val playlist = source.playlist; val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist"); val store = SportsChannelDiskStore(context)
+        val source = SourceStore(context)
+        val server = normalizeXtreamServer(source.server)
+        val user = source.user
+        val pass = source.pass
+        val playlist = source.playlist
+        val sourceKey = sha256("$server\u0000$user\u0000$pass\u0000$playlist")
+        val store = SportsChannelDiskStore(context)
         val diskSnapshot = runCatching { store.activeSnapshot(sourceKey) }.getOrDefault(emptyList())
-        if (diskSnapshot.isNotEmpty()) { cached = diskSnapshot; cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey }
-        if (forceRefresh) { if (!indexing.get()) refreshScope.launch { refreshInternal(context, server, user, pass, playlist, sourceKey) }; return@withContext if (cachedSourceKey == sourceKey) cached else diskSnapshot }
-        val age = System.currentTimeMillis() - cachedAt; val needsRefresh = diskSnapshot.isEmpty() || cachedSourceKey != sourceKey || age > CACHE_TTL_MS
-        if (needsRefresh) refreshScope.launch { refreshInternal(context, server, user, pass, playlist, sourceKey) }
-        if (cachedSourceKey == sourceKey) cached else diskSnapshot
+        if (diskSnapshot.isNotEmpty() && (cachedSourceKey != sourceKey || cached.isEmpty())) {
+            cached = diskSnapshot
+            cachedAt = System.currentTimeMillis()
+            cachedSourceKey = sourceKey
+            cachedGeneration = store.activeGeneration(sourceKey)
+        }
+        if (forceRefresh) {
+            if (!indexing.get()) refreshScope.launch { refreshInternal(context, server, user, pass, playlist, sourceKey) }
+            return@withContext if (cachedSourceKey == sourceKey && cached.isNotEmpty()) cached else diskSnapshot
+        }
+        val age = System.currentTimeMillis() - cachedAt
+        val needsRefresh = diskSnapshot.isEmpty() || cachedSourceKey != sourceKey || age > CACHE_TTL_MS
+        if (needsRefresh && !indexing.get()) refreshScope.launch { refreshInternal(context, server, user, pass, playlist, sourceKey) }
+        if (cachedSourceKey == sourceKey && cached.isNotEmpty()) cached else diskSnapshot
     }
 
     private suspend fun refreshInternal(context: Context, server: String, user: String, pass: String, playlist: String, sourceKey: String) = withContext(Dispatchers.IO) {
         if (!indexing.compareAndSet(false, true)) return@withContext
         try {
             val store = SportsChannelDiskStore(context)
-            val hadActiveSnapshot = store.activeCount(sourceKey) > 0
-            var generation: Long? = null
+            val generation = store.beginGeneration(sourceKey)
             var count = 0
-            var firstPublished = hadActiveSnapshot
-            fun publishPreviewIfReady() {
-                val gen = generation ?: return
-                if (!firstPublished && count >= FIRST_PUBLISH_SIZE) {
-                    flush(store, sourceKey, gen)
-                    store.activate(sourceKey, gen, count)
-                    val preview = store.activeSnapshot(sourceKey)
-                    if (preview.isNotEmpty()) {
-                        cached = preview
-                        cachedAt = System.currentTimeMillis()
-                        cachedSourceKey = sourceKey
-                    }
-                    firstPublished = true
-                }
-            }
+            var completedResponse = false
             fun accept(channel: SportsChannel) {
-                if (generation == null) generation = store.beginGeneration(sourceKey)
                 pending += channel
                 count++
-                if (pending.size >= BATCH_SIZE) flush(store, sourceKey, generation!!)
-                publishPreviewIfReady()
+                if (pending.size >= BATCH_SIZE) {
+                    flush(store, sourceKey, generation)
+                    store.updateRefreshProgress(sourceKey, generation, count)
+                }
             }
             pending.clear()
             if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
                 for (base in normalizedServerCandidates(server)) {
                     val before = count
-                    val categories = runCatching { fetchLiveCategories(base, user, pass) }.getOrDefault(emptyMap())
-                    runCatching { fetchLiveStreamsStreaming(base, user, pass, categories, ::accept) }
-                    if (count > before) break
+                    try {
+                        val categories = fetchLiveCategories(base, user, pass)
+                        val parsed = fetchLiveStreamsStreaming(base, user, pass, categories, ::accept)
+                        if (parsed > 0 || count > before) { completedResponse = true; break }
+                    } catch (_: Throwable) { }
                 }
-                if (count == 0) for (base in normalizedServerCandidates(server)) {
-                    val before = count
-                    runCatching { fetchM3uStreaming("$base/get.php?${credentialsQuery(user, pass)}&type=m3u_plus&output=ts", ::accept) }
-                    if (count > before) break
+                if (!completedResponse) for (base in normalizedServerCandidates(server)) {
+                    try {
+                        val parsed = fetchM3uStreaming("$base/get.php?${credentialsQuery(user, pass)}&type=m3u_plus&output=ts", ::accept)
+                        if (parsed > 0) { completedResponse = true; break }
+                    } catch (_: Throwable) { }
                 }
-            } else if (playlist.isNotBlank()) runCatching { fetchM3uStreaming(playlist, ::accept) }
-            if (generation != null && count > 0) {
-                flush(store, sourceKey, generation!!)
-                store.activate(sourceKey, generation!!, count)
+            } else if (playlist.isNotBlank()) {
+                completedResponse = runCatching { fetchM3uStreaming(playlist, ::accept) > 0 }.getOrDefault(false)
+            }
+            if (completedResponse && count > 0) {
+                flush(store, sourceKey, generation)
+                store.updateRefreshProgress(sourceKey, generation, count)
+                store.activate(sourceKey, generation, count)
                 val fresh = store.activeSnapshot(sourceKey)
-                if (fresh.isNotEmpty()) { cached = fresh; cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey }
+                if (fresh.isNotEmpty()) {
+                    cached = fresh
+                    cachedAt = System.currentTimeMillis()
+                    cachedSourceKey = sourceKey
+                    cachedGeneration = generation
+                }
             }
         } finally { pending.clear(); indexing.set(false) }
     }
@@ -138,7 +157,7 @@ object SportsChannelBridge {
     private fun flush(store: SportsChannelDiskStore, sourceKey: String, generation: Long) { if (pending.isNotEmpty()) { store.insertBatch(sourceKey, generation, pending.toList()); pending.clear() } }
     private fun fetchLiveCategories(base: String, user: String, pass: String): Map<String, String> { val query = "${credentialsQuery(user, pass)}&action=get_live_categories"; for (endpoint in listOf("player_api.php", "panel_api.php")) { val conn = runCatching { URL("$base/$endpoint?$query").openConnection() as HttpURLConnection }.getOrNull() ?: continue; try { conn.connectTimeout = 4_500; conn.readTimeout = 12_000; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"; conn.setRequestProperty("Accept", "application/json, text/plain, */*"); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USPortz/1.9"); if (conn.responseCode !in 200..299) continue; return parseCategoryNames(openDecoded(conn).bufferedReader().use { it.readText().take(2 * 1024 * 1024) }) } finally { conn.disconnect() } }; return emptyMap() }
     private fun parseCategoryNames(text: String): Map<String, String> { val out = HashMap<String, String>(); runCatching { val root = text.trim(); if (root.startsWith("[")) { val array = org.json.JSONArray(root); for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val id = item.optString("category_id").ifBlank { item.optString("id") }; val name = item.optString("category_name").ifBlank { item.optString("name") }; if (id.isNotBlank() && name.isNotBlank()) out[id] = name } } else { val obj = JSONObject(root); val array = obj.optJSONArray("categories") ?: obj.optJSONArray("data") ?: return@runCatching; for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val id = item.optString("category_id").ifBlank { item.optString("id") }; val name = item.optString("category_name").ifBlank { item.optString("name") }; if (id.isNotBlank() && name.isNotBlank()) out[id] = name } } }; return out }
-    private fun fetchLiveStreamsStreaming(base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int { val query = "${credentialsQuery(user, pass)}&action=get_live_streams"; for (endpoint in listOf("player_api.php", "panel_api.php")) { val conn = runCatching { URL("$base/$endpoint?$query").openConnection() as HttpURLConnection }.getOrNull() ?: continue; try { conn.connectTimeout = 4_500; conn.readTimeout = 60_000; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"; conn.setRequestProperty("Accept", "application/json, text/plain, */*"); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USPortz/1.9"); if (conn.responseCode !in 200..299) continue; val parsed = streamJson(openDecoded(conn), base, user, pass, categories, sink); if (parsed > 0) return parsed } finally { conn.disconnect() } }; return 0 }
+    private fun fetchLiveStreamsStreaming(base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int { val query = "${credentialsQuery(user, pass)}&action=get_live_streams"; var lastError: Throwable? = null; for (endpoint in listOf("player_api.php", "panel_api.php")) { val conn = runCatching { URL("$base/$endpoint?$query").openConnection() as HttpURLConnection }.getOrNull() ?: continue; try { conn.connectTimeout = 4_500; conn.readTimeout = 60_000; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"; conn.setRequestProperty("Accept", "application/json, text/plain, */*"); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USPortz/1.9"); if (conn.responseCode !in 200..299) continue; return streamJson(openDecoded(conn), base, user, pass, categories, sink) } catch (t: Throwable) { lastError = t } finally { conn.disconnect() } }; if (lastError != null) throw lastError; return 0 }
     private fun streamJson(input: InputStream, base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int = input.use { stream -> JsonReader(InputStreamReader(stream)).use { reader -> when (reader.peek()) { JsonToken.BEGIN_ARRAY -> readStreamArray(reader, base, user, pass, categories, sink); JsonToken.BEGIN_OBJECT -> readStreamContainer(reader, base, user, pass, categories, sink); else -> 0 } } }
     private fun readStreamContainer(reader: JsonReader, base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int { var count = 0; reader.beginObject(); while (reader.hasNext()) { val key = reader.nextName(); if (key.equals("live_streams", true) || key.equals("streams", true) || key.equals("channels", true) || key.equals("data", true) || key.equals("items", true)) { count += when (reader.peek()) { JsonToken.BEGIN_ARRAY -> readStreamArray(reader, base, user, pass, categories, sink); JsonToken.BEGIN_OBJECT -> readStreamContainer(reader, base, user, pass, categories, sink); else -> { reader.skipValue(); 0 } } } else reader.skipValue() }; reader.endObject(); return count }
     private fun readStreamArray(reader: JsonReader, base: String, user: String, pass: String, categories: Map<String, String>, sink: (SportsChannel) -> Unit): Int { var count = 0; reader.beginArray(); while (reader.hasNext()) { val channel = readStreamObject(reader, base, user, pass, categories); if (channel != null) { sink(channel); count++ } }; reader.endArray(); return count }
