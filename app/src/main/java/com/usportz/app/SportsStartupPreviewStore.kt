@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteOpenHelper
 
 /** Tiny cold-start cache for the sports experience. */
 class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(context.applicationContext, "usportz_sports_preview.db", null, 1) {
+    private val appContext = context.applicationContext
     override fun onConfigure(db: SQLiteDatabase) { super.onConfigure(db); runCatching { db.enableWriteAheadLogging() }; runCatching { db.execSQL("PRAGMA synchronous=NORMAL") } }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE preview (source_key TEXT NOT NULL, ord INTEGER NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, grp TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, tvg_name TEXT NOT NULL DEFAULT '', tvg_id TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_key, ord))""".trimIndent())
@@ -28,7 +29,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(context.app
     /** Keep the best 240 startup channels and feed the US/Canada fast lane at the same time. */
     fun mergeRanked(sourceKey:String,candidates:List<SportsChannel>,limit:Int=240){
         if(sourceKey.isBlank()||candidates.isEmpty())return
-        runCatching{NorthAmericaSportsFastLane(context.applicationContext).indexBatch(sourceKey,candidates)}
+        runCatching{NorthAmericaSportsFastLane(appContext).indexBatch(sourceKey,candidates)}
         val current=read(sourceKey,limit)
         val merged=(current+candidates).filter{it.id.isNotBlank()&&it.url.isNotBlank()}.distinctBy{"${it.id}|${it.url}"}.sortedWith(compareByDescending<SportsChannel>{NorthAmericaSportsStartupPolicy.priority(it)}.thenBy{it.name.lowercase()}).take(limit.coerceIn(32,500))
         replaceAll(sourceKey,merged)
@@ -37,7 +38,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(context.app
         if(sourceKey.isBlank()||channels.isEmpty())return
         // Fast bootstrap writes here in small increments; mirror those rows into the fast lane
         // immediately instead of waiting for a 2,000-row full-catalogue batch.
-        runCatching{NorthAmericaSportsFastLane(context.applicationContext).indexBatch(sourceKey,channels)}
+        runCatching{NorthAmericaSportsFastLane(appContext).indexBatch(sourceKey,channels)}
         val db=writableDatabase;db.beginTransactionNonExclusive()
         try{
             val s=db.compileStatement("INSERT OR REPLACE INTO preview(source_key,ord,id,name,grp,logo,url,tvg_name,tvg_id,category,provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
