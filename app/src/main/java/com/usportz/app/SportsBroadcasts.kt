@@ -2,36 +2,54 @@ package com.usportz.app
 
 /**
  * Broadcast intelligence used only to rank an already-available IPTV channel.
- * Includes common U.S. and Canadian network aliases plus conference/regional feeds.
+ * Includes major U.S./Canadian networks, regional feeds, conferences and event services.
  */
 object SportsBroadcasts {
     private val common = listOf(
-        "ABC", "CBS", "NBC", "FOX", "CW", "ESPN", "ESPN2", "ESPNU", "ESPNNews", "ESPN+",
+        "ABC", "CBS", "NBC", "FOX", "CW", "ESPN", "ESPN2", "ESPNU", "ESPN News", "ESPN+",
         "FS1", "FS2", "CBS Sports Network", "CBSSN", "TNT", "TBS", "truTV", "USA Network", "USA",
         "Peacock", "Prime Video", "Prime", "Apple TV", "Apple TV+", "Paramount+", "Netflix",
         "Tennis Channel", "Golf Channel", "NBC Sports", "NFL Network", "NBA TV", "MLB Network", "NHL Network",
         "ACC Network", "ACC Network Extra", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network",
-        "YES Network", "MASN", "SNY", "ION", "Telemundo", "Univision", "Unimas",
+        "YES Network", "MASN", "SNY", "MSG", "MSG Network", "Bally Sports", "FanDuel Sports Network", "Root Sports",
+        "ION", "Telemundo", "Universo", "Univision", "UniMas", "TUDN", "TNT Sports", "Max",
         "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "TSN+", "TSN Plus",
         "Sportsnet", "Sportsnet One", "Sportsnet 360", "Sportsnet East", "Sportsnet Ontario",
         "Sportsnet West", "Sportsnet Pacific", "Sportsnet World", "Sportsnet PPV",
         "RDS", "RDS2", "RDS Info", "TVA Sports", "TVA Sports 2", "CBC", "CBC Sports",
-        "CTV", "CTV2", "DAZN Canada", "DAZN", "Fight Network"
+        "CTV", "CTV2", "DAZN Canada", "DAZN", "Fight Network", "Willow", "FloSports", "FloRugby",
+        "FloLacrosse", "FloWrestling", "The CW", "Cowboy Channel", "PBR", "NWSL+", "MLS Season Pass",
+        "UFC Fight Pass", "MLB.TV", "NBA League Pass", "NHL.TV", "NFL+", "NFL RedZone", "Olympic Channel",
+        "World Athletics", "USA Swimming", "USA Gymnastics", "F1 TV", "MotoGP", "ESPN Deportes", "FOX Deportes"
     )
 
     private val bySport = linkedMapOf(
-        "Football" to listOf("NFL Network", "CBS", "FOX", "NBC", "ESPN", "ESPN2", "ABC", "Prime Video", "Peacock", "NFL+", "USA Network", "CW", "SEC Network", "ACC Network", "Big Ten Network", "BTN", "FS1", "FS2", "CBS Sports Network", "CBSSN", "ESPN+", "TNT", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "DAZN"),
-        "Basketball" to listOf("ABC", "ESPN", "ESPN2", "ESPNU", "ESPN+", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "USA Network", "CW", "NBA TV", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "ION", "Paramount+", "Max", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "Sportsnet", "RDS"),
-        "NCAA Basketball" to listOf("ESPN", "ESPN2", "ESPNU", "ESPN+", "ABC", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "CW", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "Paramount+", "Max", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "DAZN"),
-        "Baseball" to listOf("FOX", "FS1", "ESPN", "ESPN2", "ABC", "TBS", "MLB Network", "MLB.TV", "Apple TV+", "Apple TV", "Peacock", "NBC", "CBS", "FOX Deportes", "ESPN+", "Roku", "Sportsnet", "Sportsnet One", "Sportsnet Ontario", "TSN", "TSN2", "TSN3", "TSN4", "TSN5"),
-        "Hockey" to listOf("ESPN", "ESPN2", "ABC", "ESPN+", "TNT", "TBS", "truTV", "NHL Network", "NBC", "Peacock", "CBS Sports Network", "CBSSN", "Big Ten Network", "BTN", "Sportsnet", "Sportsnet East", "Sportsnet Ontario", "Sportsnet West", "Sportsnet Pacific", "Sportsnet 360", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "RDS2", "TVA Sports", "CBC"),
-        "Soccer" to listOf("Apple TV", "Apple TV+", "MLS Season Pass", "FOX", "FS1", "FS2", "ESPN", "ESPN2", "ESPN+", "ABC", "CBS", "CBS Sports Network", "Paramount+", "NBC", "USA Network", "Peacock", "Telemundo", "Universo", "Univision", "TUDN", "TNT", "TBS", "truTV", "TSN", "TSN2", "TSN3", "TSN4", "TSN5", "Sportsnet", "RDS", "DAZN"),
+        "Football" to listOf("NFL Network", "NFL RedZone", "CBS", "FOX", "NBC", "ESPN", "ESPN2", "ABC", "Prime Video", "Peacock", "NFL+", "USA Network", "CW", "SEC Network", "ACC Network", "Big Ten Network", "BTN", "FS1", "FS2", "CBS Sports Network", "CBSSN", "ESPN+", "TNT", "TSN", "RDS", "DAZN"),
+        "Basketball" to listOf("ABC", "ESPN", "ESPN2", "ESPNU", "ESPN+", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "USA Network", "CW", "NBA TV", "NBA League Pass", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "ION", "Paramount+", "Max", "TSN", "Sportsnet", "RDS"),
+        "NCAA Basketball" to listOf("ESPN", "ESPN2", "ESPNU", "ESPN+", "ABC", "CBS", "CBS Sports Network", "CBSSN", "FOX", "FS1", "FS2", "NBC", "Peacock", "Prime Video", "TNT", "TBS", "truTV", "CW", "ACC Network", "SEC Network", "Big Ten Network", "BTN", "B1G+", "Longhorn Network", "Paramount+", "Max", "TSN", "RDS", "DAZN"),
+        "Baseball" to listOf("FOX", "FS1", "ESPN", "ESPN2", "ABC", "TBS", "MLB Network", "MLB.TV", "Apple TV+", "Apple TV", "Peacock", "NBC", "CBS", "FOX Deportes", "ESPN+", "Sportsnet", "Sportsnet One", "Sportsnet Ontario", "TSN", "TSN2", "TSN3", "TSN4", "TSN5"),
+        "Hockey" to listOf("ESPN", "ESPN2", "ABC", "ESPN+", "TNT", "TBS", "truTV", "NHL Network", "NHL.TV", "NBC", "Peacock", "CBS Sports Network", "CBSSN", "Big Ten Network", "BTN", "Sportsnet", "Sportsnet East", "Sportsnet Ontario", "Sportsnet West", "Sportsnet Pacific", "Sportsnet 360", "TSN", "TSN1", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "RDS2", "TVA Sports", "CBC"),
+        "Soccer" to listOf("Apple TV", "Apple TV+", "MLS Season Pass", "FOX", "FS1", "FS2", "ESPN", "ESPN2", "ESPN+", "ABC", "CBS", "CBS Sports Network", "Paramount+", "NBC", "USA Network", "Peacock", "Telemundo", "Universo", "Univision", "UniMas", "TUDN", "TNT", "TBS", "truTV", "TSN", "Sportsnet", "RDS", "DAZN", "NWSL+"),
         "MMA" to listOf("Paramount+", "CBS", "ESPN", "ESPN+", "UFC Fight Pass", "USA Network", "ABC", "TNT", "TSN", "Sportsnet", "DAZN", "Fight Network"),
         "Boxing" to listOf("ESPN", "ESPN+", "ABC", "FOX", "FS1", "FS2", "CBS", "Paramount+", "DAZN", "TNT", "TBS", "truTV", "Prime Video", "TSN", "Sportsnet", "RDS", "Fight Network"),
-        "Wrestling" to listOf("USA Network", "USA", "CW", "Peacock", "ESPN", "Netflix", "FOX", "FS1", "ABC", "CBS", "TSN", "Sportsnet"),
-        "Motorsports" to listOf("FOX", "FS1", "FS2", "NBC", "USA Network", "Peacock", "TNT", "Prime Video", "ABC", "ESPN", "ESPN2", "ESPN+", "CW", "Apple TV+", "Apple TV", "TSN", "TSN2", "RDS", "Sportsnet"),
+        "Wrestling" to listOf("USA Network", "USA", "CW", "Peacock", "ESPN", "Netflix", "FOX", "FS1", "ABC", "CBS", "TSN", "Sportsnet", "FloWrestling"),
+        "Motorsports" to listOf("FOX", "FS1", "FS2", "NBC", "USA Network", "Peacock", "ABC", "ESPN", "ESPN2", "ESPN+", "CW", "Apple TV+", "Apple TV", "Prime Video", "F1 TV", "MotoGP", "TSN", "RDS", "Sportsnet"),
         "Tennis" to listOf("ESPN", "ESPN2", "ABC", "ESPN+", "Tennis Channel", "NBC", "Peacock", "CBS", "TNT", "TBS", "TSN", "TSN2", "TSN3", "TSN4", "TSN5", "RDS", "Sportsnet"),
-        "Golf" to listOf("CBS", "NBC", "Golf Channel", "USA Network", "USA", "Peacock", "ESPN", "ESPN+", "FOX", "FS1", "CW", "CBS Sports Network", "CBSSN", "TSN", "TSN2", "TSN4", "RDS")
+        "Golf" to listOf("CBS", "NBC", "Golf Channel", "USA Network", "USA", "Peacock", "ESPN", "ESPN+", "FOX", "FS1", "CW", "CBS Sports Network", "CBSSN", "TSN", "RDS"),
+        "Racing" to listOf("FOX", "FS1", "FS2", "NBC", "USA Network", "Peacock", "ESPN", "ESPN2", "ESPN+", "CBS Sports Network", "Cowboy Channel", "PBR", "TSN", "Sportsnet"),
+        "Volleyball" to listOf("ESPN", "ESPN2", "ESPNU", "ESPN+", "ABC", "CBS Sports Network", "NBC", "Peacock", "Big Ten Network", "BTN", "ACC Network", "SEC Network", "FloSports", "FloVolleyball", "TNT Sports"),
+        "Rugby" to listOf("NBC", "USA Network", "Peacock", "ESPN+", "CBS Sports Network", "FloRugby", "FloSports", "TNT Sports", "TSN", "DAZN"),
+        "Cricket" to listOf("Willow", "ESPN+", "ABC", "TNT Sports", "Prime Video", "DAZN", "TSN", "Sportsnet", "FloSports"),
+        "Lacrosse" to listOf("ESPN", "ESPN2", "ESPNU", "ESPN+", "ABC", "CBS Sports Network", "TNT", "TSN", "FloLacrosse", "FloSports", "NBC", "Peacock"),
+        "Track & Field" to listOf("NBC", "Peacock", "USA Network", "ESPN", "ESPN2", "ESPN+", "FloSports", "World Athletics", "TSN"),
+        "Swimming" to listOf("NBC", "Peacock", "USA Network", "Olympic Channel", "ESPN", "ESPN+", "USA Swimming", "FloSports", "TSN"),
+        "Gymnastics" to listOf("NBC", "Peacock", "USA Network", "ESPN", "ESPN2", "ABC", "Olympic Channel", "USA Gymnastics", "FloSports", "TSN"),
+        "Cycling" to listOf("NBC", "Peacock", "USA Network", "ESPN+", "FloSports", "TNT Sports", "TSN", "Sportsnet", "RDS"),
+        "Horse Racing" to listOf("NBC", "Peacock", "FOX", "FS1", "FS2", "FanDuel Sports Network", "Turfway", "TVG", "Cowboy Channel", "TSN", "Sportsnet"),
+        "Rodeo" to listOf("CBS Sports Network", "CBSSN", "Cowboy Channel", "PBR", "ESPN+", "FOX", "FS1", "FloRodeo", "TSN"),
+        "Olympics" to listOf("NBC", "Peacock", "USA Network", "CNBC", "E!", "Olympic Channel", "TSN", "CBC"),
+        "Paralympics" to listOf("NBC", "Peacock", "USA Network", "Olympic Channel", "TSN", "CBC"),
+        "Esports" to listOf("ESPN", "ESPN2", "TBS", "TNT", "YouTube", "Twitch", "Prime Video", "Peacock", "FOX", "FS1")
     )
 
     private val conferenceNetworks = linkedMapOf(
@@ -81,6 +99,7 @@ object SportsBroadcasts {
     /** Normalize network names without destroying the legitimate USA network token. */
     fun normalize(value: String): String = value.lowercase()
         .replace("&", " and ")
+        .replace("espn news", "espnnews")
         .replace("espn plus", "espn+")
         .replace("fox sports 1", "fs1")
         .replace("fox sports 2", "fs2")
@@ -92,8 +111,7 @@ object SportsBroadcasts {
         .replace("peacock premium", "peacock")
         .replace("prime video", "prime")
         .replace("apple tv plus", "apple tv+")
-        // Only strip standalone geographic suffixes. Never strip "usa": it is
-        // both a region label and the canonical name of a major sports network.
+        .replace("fan duel sports network", "fanduel sports network")
         .replace(Regex("\\b(canada|ca)\\b"), " ")
         .replace(Regex("[^a-z0-9+]+"), " ")
         .trim()
