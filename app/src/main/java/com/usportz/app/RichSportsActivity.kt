@@ -212,7 +212,34 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 @Composable private fun SourcesTab(open: () -> Unit) { Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text("SOURCES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("Xtream Codes + M3U/M3U8", color = Color.Gray); Card(Modifier.fillMaxWidth().clickable { open() }, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.SettingsInputAntenna, null, tint = Orange); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text("Manage source", color = Color.White, fontWeight = FontWeight.Bold); Text("Connect, test and index your playlist", color = Color.Gray, fontSize = 12.sp) }; Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } } } }
 @Composable private fun BottomBar(selected: Int, onSelect: (Int) -> Unit) { NavigationBar(containerColor = Color(0xFF11131D)) { listOf(Icons.Default.Home to "Home", Icons.Default.SportsScore to "Sports", Icons.Default.LiveTv to "Sports TV", Icons.Default.Star to "Favorites", Icons.Default.Settings to "Sources").forEachIndexed { i, item -> NavigationBarItem(selected = selected == i, onClick = { onSelect(i) }, icon = { Icon(item.first, item.second) }, label = { Text(item.second) }) } } }
 @Composable private fun Header(refreshing: Boolean, onRefresh: () -> Unit) { Row(Modifier.fillMaxWidth().background(Panel2).padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("USPORTZ", fontSize = 31.sp, fontWeight = FontWeight.Black, color = Color.White); Text("SPORTS COMMAND CENTER", fontSize = 11.sp, color = Orange2, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp) }; IconButton(onClick = onRefresh, enabled = !refreshing) { Icon(if (refreshing) Icons.Default.Sync else Icons.Default.Refresh, "Refresh", tint = if (refreshing) Color.Gray else Orange) } } }
-@Composable private fun Hero(channels: Int, live: Int, soon: Int, today: Int, error: String) { Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel2)) { Column(Modifier.padding(20.dp)) { Text("LIVE SPORTS", color = Orange, fontSize = 12.sp, fontWeight = FontWeight.Black); Text("Tap a game to choose a source.", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 5.dp)); Text("$live live  •  $soon starting soon  •  $today later today  •  $channels channels", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)); if (error.isNotBlank()) Text("Data warning: $error", color = Orange2, fontSize = 10.sp, modifier = Modifier.padding(top = 7.dp)) } } }
+@Composable private fun Hero(channels: Int, live: Int, soon: Int, today: Int, error: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var progress by remember { mutableStateOf<CatalogRefreshProgress?>(null) }
+    LaunchedEffect(channels) {
+        while (true) {
+            progress = withContext(Dispatchers.IO) { SportsChannelBridge.refreshProgress(context) }
+            delay(1_000)
+        }
+    }
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel2)) {
+        Column(Modifier.padding(20.dp)) {
+            Text("LIVE SPORTS", color = Orange, fontSize = 12.sp, fontWeight = FontWeight.Black)
+            Text("Tap a game to choose a source.", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 5.dp))
+            Text("$live live  •  $soon starting soon  •  $today later today  •  $channels sports channels", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            progress?.let { p ->
+                val active = SportsChannelBridge.isIndexing() || p.imported > 0
+                if (active) {
+                    val determinate = p.expected > 0
+                    val fraction = if (determinate) (p.imported.toFloat() / p.expected.toFloat()).coerceIn(0f, 1f) else 0f
+                    Text(if (determinate) "${p.imported} / ${p.expected} channels refreshing" else "${p.imported} channels refreshing", color = Orange2, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 9.dp))
+                    LinearProgressIndicator(progress = { fraction }, color = Orange, trackColor = Panel, modifier = Modifier.fillMaxWidth().padding(top = 5.dp))
+                    if (!determinate) Text("Importing the complete provider catalogue — the previous complete snapshot stays live until this refresh finishes.", color = Color.Gray, fontSize = 9.sp, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+            if (error.isNotBlank()) Text("Data warning: $error", color = Orange2, fontSize = 10.sp, modifier = Modifier.padding(top = 7.dp))
+        }
+    }
+}
 @Composable private fun SportRail(selected: String, onSport: (String) -> Unit) { LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(SportsCatalog.categories, key = { it }) { sport -> FilterChip(selected = selected == sport, onClick = { onSport(sport) }, label = { Text(sport) }) } } }
 @Composable private fun ScheduleRail(selected: ScheduleBucket, onSelected: (ScheduleBucket) -> Unit, events: List<SportsEvent>, now: Long) { LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) { items(ScheduleBucket.values().toList(), key = { it.name }) { item -> FilterChip(selected = selected == item, onClick = { onSelected(item) }, label = { Text("${item.label}  ${events.count { scheduleBucket(it, now) == item }}") }) } } }
 @Composable private fun SectionTitle(title: String, detail: String, accent: Color) { Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.width(4.dp).height(24.dp).background(accent, RoundedCornerShape(3.dp))); Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) { Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Black); Text(detail, color = Color.Gray, fontSize = 11.sp) } } }
