@@ -1,0 +1,37 @@
+name: Fix build annotation
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add required Compose opt-in
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('app/src/main/java/com/usportz/app/RichSportsActivity.kt')
+          s = p.read_text()
+          if 'import androidx.compose.foundation.ExperimentalFoundationApi' not in s:
+              s = s.replace('import androidx.compose.foundation.background\n', 'import androidx.compose.foundation.ExperimentalFoundationApi\nimport androidx.compose.foundation.background\n')
+          if '@OptIn(ExperimentalFoundationApi::class)' not in s:
+              s = s.replace('@Composable private fun EventCard(', '@OptIn(ExperimentalFoundationApi::class)\n@Composable private fun EventCard(', 1)
+          p.write_text(s)
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/usportz/app/RichSportsActivity.kt
+          git commit -m "Opt in to experimental combined click API"
+          git push
+      - name: Remove one-time workflow
+        run: |
+          git rm .github/workflows/fix-build-annotation.yml
+          git commit -m "Remove one-time build fix workflow"
+          git push
