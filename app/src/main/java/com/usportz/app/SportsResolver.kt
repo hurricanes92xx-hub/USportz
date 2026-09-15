@@ -70,9 +70,10 @@ object SportsResolver {
         if (healthPenalty > 0) { score -= healthPenalty; reasons += "provider health -$healthPenalty" }
         if (noiseWords.any { metadata.contains(it) } && distinctTeams == 0 && network == null && exact == null && labelMatch == null) score -= 35
 
-        // Generic league/sport channels are legitimate fallbacks, but they must
-        // never outrank a concrete team match or exact broadcaster identity.
-        val concreteEvidence = distinctTeams > 0 || teamHits > 0 || exact != null
+        // A preferred network is concrete evidence even when the schedule feed
+        // omitted an explicit broadcast field. This is important for sports such
+        // as tennis/golf where the event feed often has no broadcaster populated.
+        val concreteEvidence = distinctTeams > 0 || teamHits > 0 || exact != null || network != null
         if (!concreteEvidence && labelMatch != null && leagueMatch) {
             score = score.coerceAtMost(59)
             reasons += "generic fallback tier"
