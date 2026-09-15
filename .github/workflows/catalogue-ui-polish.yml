@@ -1,0 +1,67 @@
+name: Catalogue UI polish
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'catalogue-ui-polish') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Patch sports catalogue hero
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p = Path('app/src/main/java/com/usportz/app/RichSportsActivity.kt')
+          s = p.read_text()
+          pattern = re.compile(r'@Composable private fun Hero\(channels: Int, live: Int, soon: Int, today: Int, error: String\).*?\n@Composable private fun SportRail', re.S)
+          replacement = '''@Composable private fun Hero(channels: Int, live: Int, soon: Int, today: Int, error: String) {
+              val context = androidx.compose.ui.platform.LocalContext.current
+              var progress by remember { mutableStateOf<CatalogRefreshProgress?>(null) }
+              LaunchedEffect(channels) {
+                  while (true) {
+                      progress = withContext(Dispatchers.IO) { SportsChannelBridge.refreshProgress(context) }
+                      delay(1_000)
+                  }
+              }
+              Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel2)) {
+                  Column(Modifier.padding(20.dp)) {
+                      Text("LIVE SPORTS", color = Orange, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                      Text("Tap a game to choose a source.", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 5.dp))
+                      Text("$live live  •  $soon starting soon  •  $today later today  •  $channels sports channels", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+                      progress?.let { p ->
+                          val active = SportsChannelBridge.isIndexing() || p.imported > 0
+                          if (active) {
+                              val determinate = p.expected > 0
+                              val fraction = if (determinate) (p.imported.toFloat() / p.expected.toFloat()).coerceIn(0f, 1f) else 0f
+                              Text(if (determinate) "${p.imported} / ${p.expected} channels refreshing" else "${p.imported} channels refreshing", color = Orange2, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 9.dp))
+                              LinearProgressIndicator(progress = { fraction }, color = Orange, trackColor = Panel, modifier = Modifier.fillMaxWidth().padding(top = 5.dp))
+                              if (!determinate) Text("Importing the complete provider catalogue — the previous complete snapshot stays live until this refresh finishes.", color = Color.Gray, fontSize = 9.sp, modifier = Modifier.padding(top = 4.dp))
+                          }
+                      }
+                      if (error.isNotBlank()) Text("Data warning: $error", color = Orange2, fontSize = 10.sp, modifier = Modifier.padding(top = 7.dp))
+                  }
+              }
+          }
+          @Composable private fun SportRail'''
+          out, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+              raise SystemExit('Hero function shape not found; refusing to patch')
+          p.write_text(out)
+      - name: Commit patch and remove one-shot workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -f .github/workflows/catalogue-ui-polish.yml
+          git add app/src/main/java/com/usportz/app/RichSportsActivity.kt .github/workflows/catalogue-ui-polish.yml
+          git diff --cached --quiet || git commit -m 'catalogue-ui-polish: show sports count and refresh progress'
+          git push origin HEAD:main
