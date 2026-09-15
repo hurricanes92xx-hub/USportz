@@ -22,7 +22,8 @@ object SportsCatalog {
         "Motorsports" to listOf("nascar", "indycar", "irl", "formula 1", "formula one", "f1", "motogp", "motocross", "motorsport", "grand prix"),
         "Tennis" to listOf("atp", "wta", "tennis", "us open", "wimbledon", "roland garros", "french open", "australian open"),
         "Golf" to listOf("pga", "lpga", "liv golf", "golf", "masters", "ryder cup", "solheim cup"),
-        "Racing" to listOf("monster jam", "drag racing", "nhra", "horse racing", "racing"),
+        "Horse Racing" to listOf("horse racing", "kentucky derby", "belmont stakes", "preakness", "breeders cup", "triple crown"),
+        "Racing" to listOf("monster jam", "drag racing", "nhra", "racing"),
         "Volleyball" to listOf("volleyball", "ncaa volleyball", "ncaaw volleyball", "beach volleyball"),
         "Rugby" to listOf("rugby", "nrl", "super rugby", "premiership rugby", "six nations", "rugby world cup"),
         "Cricket" to listOf("cricket", "ipl", "t20", "test cricket", "big bash", "world cup cricket"),
@@ -31,11 +32,10 @@ object SportsCatalog {
         "Swimming" to listOf("swimming", "world aquatics", "usa swimming"),
         "Gymnastics" to listOf("gymnastics", "usa gymnastics", "world gymnastics"),
         "Cycling" to listOf("cycling", "tour de france", "vuelta", "giro d'italia", "giro ditalia"),
-        "Horse Racing" to listOf("horse racing", "kentucky derby", "belmont stakes", "preakness", "breeders cup", "triple crown"),
         "Rodeo" to listOf("rodeo", "pbr", "professional bull riders", "prorodeo"),
         "Olympics" to listOf("olympics", "olympic", "summer games", "winter games"),
         "Paralympics" to listOf("paralympics", "paralympic"),
-        "Esports" to listOf("esports", "esports", "league of legends", "valorant", "counter-strike", "cs2", "rocket league")
+        "Esports" to listOf("esports", "league of legends", "valorant", "counter-strike", "cs2", "rocket league")
     )
 
     fun classify(name: String, group: String = ""): String {
