@@ -76,7 +76,7 @@ object SportsResolver {
             reasons += "generic fallback tier"
         }
 
-        if (!concreteEvidence && !leagueMatch && exact == null) return null
+        if (!concreteEvidence && !leagueMatch) return null
 
         val capped = score.coerceAtMost(100)
         return if (capped >= 45) WatchSource(channel, capped, reasons.distinct().take(6)) else null
@@ -149,8 +149,8 @@ object SportsResolver {
         if (n.isBlank()) return false
         if (h == n) return true
         val padded = " $h "
-        if (!padded.contains(" $n ")) return false
-        if (!h.startsWith("$n ")) return true
+        if (padded.contains(" $n ")) return true
+        if (!h.startsWith("$n ")) return false
         val suffix = h.removePrefix("$n ").trim()
         return suffix in qualityWords || suffix in setOf("network", "channel")
     }
