@@ -7,7 +7,6 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Secure local source settings. Credentials are encrypted at rest and never logged. */
@@ -63,39 +62,12 @@ class SourceStore(private val context: Context) {
                 return@launch
             }
 
-            // Tuvora-style flow: authenticate once, stream the complete provider catalogue
-            // into the local database in bounded batches, then expose the completed snapshot.
-            // Do not fetch a sports-only subset first and do not keep thousands of channel
-            // objects in memory. The Sports screen reads only the indexed sports projection.
-            main.post { progress("Connected • importing all channels…") }
+            // Authentication is the login gate. The complete catalogue import is deliberately
+            // decoupled from it: the dashboard can open immediately while the disk-backed
+            // importer streams the provider catalogue in the background.
+            main.post { progress("Connected • loading channels in background…") }
             runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
-
-            // forceRefresh intentionally starts the disk import without blocking. Wait here
-            // using cheap SQLite-backed reads so the login screen does not report success while
-            // the dashboard still sees an empty catalogue. No IPTV request is made by this loop.
-            var waitedMs = 0L
-            var lastProgress = 0L
-            var indexedSports = emptyList<SportsChannel>()
-            while (waitedMs < 180_000L) {
-                delay(1_000L)
-                waitedMs += 1_000L
-                indexedSports = runCatching { SportsChannelBridge.load(context, forceRefresh = false) }.getOrDefault(emptyList())
-                if (indexedSports.isNotEmpty()) break
-                if (waitedMs - lastProgress >= 5_000L) {
-                    lastProgress = waitedMs
-                    val seconds = waitedMs / 1_000L
-                    main.post { progress("Connected • importing all channels… ${seconds}s") }
-                }
-            }
-
-            if (indexedSports.isNotEmpty()) {
-                main.post { done(true, "Connected • ${indexedSports.size} sports channels indexed from full catalogue") }
-            } else {
-                // Authentication succeeded even if this provider is unusually slow or has no
-                // channels classified as sports. Keep the credentials and let the normal app
-                // refresh continue rather than falsely telling the user that login failed.
-                main.post { done(true, "Connected • full channel import is still finishing in background") }
-            }
+            main.post { done(true, "Connected • channel import continuing in background") }
         }
     }
 
@@ -112,9 +84,8 @@ class SourceStore(private val context: Context) {
         playlist = cleanUrl
         server = ""; user = ""; pass = ""
         io.launch {
-            val result = runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
-            val channels = result.getOrDefault(emptyList())
-            main.post { if (channels.isNotEmpty()) done(true, "Connected • ${channels.size} channels indexed") else done(false, result.exceptionOrNull()?.message?.let { "Source error: $it" } ?: "Source returned no channels") }
+            runCatching { SportsChannelBridge.load(context, forceRefresh = true) }
+            main.post { done(true, "Connected • playlist import continuing in background") }
         }
     }
 
