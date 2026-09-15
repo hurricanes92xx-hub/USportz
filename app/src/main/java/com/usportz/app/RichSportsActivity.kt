@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -89,6 +90,14 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
         val saved = withContext(Dispatchers.IO) { SportsScheduleDiskCache.read(activity) }
         if (saved.isNotEmpty()) { events = saved; loading = false; now = System.currentTimeMillis() }
         reload(false)
+        // Adopt the isolated sports preview as soon as it is written. Without this short
+        // handoff the screen could remain at zero channels until the 30-second refresh loop.
+        for (attempt in 0 until 45) {
+            if (channels.isNotEmpty()) break
+            delay(750)
+            val startupSnapshot = withContext(Dispatchers.IO) { SportsChannelBridge.load(activity, false) }
+            if (startupSnapshot.isNotEmpty()) channels = startupSnapshot
+        }
         while (true) { delay(30_000); reload(false) }
     }
     LaunchedEffect(refresh) { if (refresh > 0) reload(true) }
@@ -105,7 +114,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
                 when (tab) {
                     0 -> HomeTab(events, channels, selectedSport, now, loading, refreshing, error, { selectedSport = it }, { refresh++ }, activity::playChannel, activity::playEvent) { selectedEvent = it }
                     1 -> SportsTab(visibleEvents, events, channels, selectedSport, bucket, now, { selectedSport = it }, { bucket = it }, { refresh++ }, activity::playChannel, activity::playEvent, favorites) { selectedEvent = it }
-                    2 -> SportsNewsTab(channels, loading, activity::playChannel)
+                    2 -> SportsNewsTab(channels, loading, SportsChannelBridge.isIndexing() || FastXtreamSportsBootstrap.isRunning(), activity::playChannel)
                     3 -> FavoritesTab(events, channels, favorites, activity::playChannel, activity::playEvent) { selectedEvent = it }
                     4 -> SourcesTab { activity.openSourceApp() }
                 }
@@ -158,7 +167,14 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
     val countdown = if (start != null && start > now) formatCountdown(start - now) else ""
     val isFavorite = favorites?.get(event.id) == true
     val monsterJam = isMonsterJamEvent(event)
-    Card(Modifier.fillMaxWidth().clickable { openEvent(event) }, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
+    Card(
+        Modifier.fillMaxWidth().combinedClickable(
+            onClick = { if (ranked.isNotEmpty()) play(ranked.first().channel) else openEvent(event) },
+            onLongClick = { openEvent(event) }
+        ),
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(18.dp)
+    ) {
         Column(Modifier.padding(15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (live) { Box(Modifier.size(9.dp).background(LiveRed, RoundedCornerShape(50))); Spacer(Modifier.width(7.dp)); Text("LIVE NOW", color = LiveRed, fontSize = 10.sp, fontWeight = FontWeight.Black) }
@@ -174,7 +190,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
             if (event.competitorLogos.any { it.isNotBlank() }) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) { event.competitorLogos.take(2).forEachIndexed { i, logo -> if (logo.isNotBlank()) AsyncImage(logo, event.competitors.getOrNull(i).orEmpty(), Modifier.size(32.dp), contentScale = ContentScale.Fit) }; Text(event.competitors.take(2).joinToString("  •  "), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(if (ranked.isEmpty()) "MATCHING SOURCES…" else "${ranked.size} AVAILABLE SOURCES", color = if (ranked.isEmpty()) Color.Gray else Orange, fontSize = 10.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
-                Text("TAP FOR SOURCES", color = Color(0xFF9DA5B7), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Text(if (ranked.isEmpty()) "TAP FOR SOURCES" else "TAP TO WATCH • HOLD FOR SOURCES", color = Color(0xFF9DA5B7), fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(5.dp)); Icon(Icons.Default.ChevronRight, null, tint = Orange)
             }
             if (monsterJam) OutlinedButton(onClick = { playEvent(event) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("WATCH OFFICIAL MONSTER JAM STREAM", color = Orange, fontWeight = FontWeight.Black) }
@@ -197,13 +213,13 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
     }, confirmButton = { TextButton(onClick = close) { Text("CLOSE", color = Orange) } })
 }
 
-@Composable private fun SportsNewsTab(channels: List<SportsChannel>, loading: Boolean, play: (SportsChannel) -> Unit) {
+@Composable private fun SportsNewsTab(channels: List<SportsChannel>, loading: Boolean, indexing: Boolean, play: (SportsChannel) -> Unit) {
     val sports = remember(channels) { SportsNetworkCatalog.sportsChannels(channels) }
     val grouped = remember(sports) { sports.groupBy { it.second.key } }
     val networks = remember(sports) { sports.map { it.second }.distinctBy { it.key } }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("SPORTS TV", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("US + Canada sports networks", color = Orange2, fontSize = 13.sp, fontWeight = FontWeight.Bold); Text(if (loading) "Finding sports networks in your source…" else "${sports.size} sports channels found", color = Color.Gray, fontSize = 12.sp) }
-        if (!loading && sports.isEmpty()) item { EmptyCard("No sports networks found", "Add a source containing ESPN, TSN, Sportsnet, ACC Network or another supported sports network.") }
+        item { Text("SPORTS TV", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("US + Canada sports networks", color = Orange2, fontSize = 13.sp, fontWeight = FontWeight.Bold); Text(when { loading -> "Loading sports data…"; indexing && sports.isEmpty() -> "Sports index is building while the full IPTV catalogue refreshes…"; indexing -> "${sports.size} sports channels indexed so far…"; else -> "${sports.size} sports channels found" }, color = Color.Gray, fontSize = 12.sp) }
+        if (!loading && !indexing && sports.isEmpty()) item { EmptyCard("No sports networks found", "Add a source containing ESPN, TSN, Sportsnet, ACC Network or another supported sports network.") }
         items(networks, key = { "network-${it.key}" }) { network -> val matches = grouped[network.key].orEmpty(); Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) { Column(Modifier.padding(14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { AsyncImage(network.logoUrl, network.label, Modifier.size(48.dp), contentScale = ContentScale.Fit); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(network.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold); Text("${matches.size} channel${if (matches.size == 1) "" else "s"}", color = Color.Gray, fontSize = 11.sp) } }; Spacer(Modifier.height(8.dp)); matches.take(8).forEach { (channel, _) -> OutlinedButton(onClick = { play(channel) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(channel.name, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis); Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } } } } }
     }
 }
@@ -224,8 +240,8 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel2)) {
         Column(Modifier.padding(20.dp)) {
             Text("LIVE SPORTS", color = Orange, fontSize = 12.sp, fontWeight = FontWeight.Black)
-            Text("Tap a game to choose a source.", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 5.dp))
-            Text("$live live  •  $soon starting soon  •  $today later today  •  $channels sports channels", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            Text("Tap a game to watch.", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 5.dp))
+            Text("$live live  •  $soon starting soon  •  $today later today  •  ${if (channels == 0 && progress != null && (SportsChannelBridge.isIndexing() || FastXtreamSportsBootstrap.isRunning())) "sports index building…" else "$channels sports channels"}", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
             progress?.let { p ->
                 val active = SportsChannelBridge.isIndexing() || p.imported > 0
                 if (active) {
@@ -245,7 +261,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 @Composable private fun SectionTitle(title: String, detail: String, accent: Color) { Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.width(4.dp).height(24.dp).background(accent, RoundedCornerShape(3.dp))); Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) { Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Black); Text(detail, color = Color.Gray, fontSize = 11.sp) } } }
 @Composable private fun EmptyCard(title: String, subtitle: String) { Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp)) { Column(Modifier.padding(18.dp)) { Text(title, color = Color.White, fontWeight = FontWeight.Bold); Text(subtitle, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) } } }
 private fun emptyTitle(bucket: ScheduleBucket) = when (bucket) { ScheduleBucket.LIVE -> "No live games detected"; ScheduleBucket.STARTING_SOON -> "No events starting soon"; ScheduleBucket.TODAY -> "No more events today"; ScheduleBucket.TOMORROW -> "Nothing scheduled tomorrow"; ScheduleBucket.NEXT_3_DAYS -> "No events in the next three days"; ScheduleBucket.COMPLETED -> "No completed events" }
-private fun emptySubtitle(bucket: ScheduleBucket) = when (bucket) { ScheduleBucket.LIVE -> "The live schedule is checked independently of your Xtream playlist."; ScheduleBucket.STARTING_SOON -> "Events within the next six hours appear here."; ScheduleBucket.TODAY -> "Try another sport or check TOMORROW."; ScheduleBucket.TOMORROW -> "The schedule will update as events are published."; ScheduleBucket.NEXT_3_DAYS -> "Try another sport or refresh."; ScheduleBucket.COMPLETED -> "Finished events remain available for reference." }
+private fun emptySubtitle(bucket: ScheduleBucket) = when (bucket) { ScheduleBucket.LIVE -> "The live schedule is checked independently of your Xtream playlist."; ScheduleBucket.STARTING_SOON -> "Events within the next six hours appear here."; ScheduleBucket.TODAY -> "The schedule will update as events are published."; ScheduleBucket.TOMORROW -> "The schedule will update as events are published."; ScheduleBucket.NEXT_3_DAYS -> "Try another sport or refresh."; ScheduleBucket.COMPLETED -> "Finished events remain available for reference." }
 private fun eventEpoch(value: String): Long? = runCatching { Instant.parse(value).toEpochMilli() }.getOrNull() ?: runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrNull() ?: value.toLongOrNull()?.let { if (it < 10_000_000_000L) it * 1000 else it }
 private fun scheduleBucket(event: SportsEvent, nowMs: Long): ScheduleBucket { val start = eventEpoch(event.startTime) ?: return if (event.state == "in") ScheduleBucket.LIVE else ScheduleBucket.TODAY; val delta = start - nowMs; val today = Instant.ofEpochMilli(nowMs).atZone(ZoneId.systemDefault()).toLocalDate(); val eventDay = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate(); return when { event.state == "in" -> ScheduleBucket.LIVE; event.state != "post" && delta <= 0 && delta > -6 * 60 * 60 * 1000L -> ScheduleBucket.LIVE; delta > 0 && delta <= 6 * 60 * 60 * 1000L -> ScheduleBucket.STARTING_SOON; eventDay == today -> ScheduleBucket.TODAY; eventDay == today.plusDays(1) -> ScheduleBucket.TOMORROW; eventDay.isAfter(today) && eventDay <= today.plusDays(3) -> ScheduleBucket.NEXT_3_DAYS; start < nowMs -> ScheduleBucket.COMPLETED; else -> ScheduleBucket.NEXT_3_DAYS } }
 private fun formatCountdown(ms: Long): String { val total = (ms / 1000).coerceAtLeast(0); val h = total / 3600; val m = (total % 3600) / 60; return if (h > 0) "${h}h ${m}m" else "${m}m" }
