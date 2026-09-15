@@ -51,9 +51,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
         try {
             db.delete("preview", "source_key=?", arrayOf(sourceKey))
             if (channels.isNotEmpty()) {
-                val statement = db.compileStatement(
-                    "INSERT INTO preview(source_key,ord,id,name,grp,logo,url,tvg_name,tvg_id,category,provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
-                )
+                val statement = db.compileStatement("INSERT INTO preview(source_key,ord,id,name,grp,logo,url,tvg_name,tvg_id,category,provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 try {
                     channels.take(240).forEachIndexed { index, channel ->
                         statement.clearBindings()
@@ -83,7 +81,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
         val merged = (current + candidates)
             .filter { it.id.isNotBlank() && it.url.isNotBlank() }
             .distinctBy { "${it.id}|${it.url}" }
-            .sortedWith(compareByDescending<SportsChannel> { SportsNetworkCatalog.startupPriority(it) }.thenBy { it.name.lowercase() })
+            .sortedWith(compareByDescending<SportsChannel> { NorthAmericaSportsStartupPolicy.priority(it) }.thenBy { it.name.lowercase() })
             .take(limit.coerceIn(32, 500))
         replaceAll(sourceKey, merged)
     }
@@ -93,9 +91,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
         val db = writableDatabase
         db.beginTransactionNonExclusive()
         try {
-            val statement = db.compileStatement(
-                "INSERT OR REPLACE INTO preview(source_key,ord,id,name,grp,logo,url,tvg_name,tvg_id,category,provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
-            )
+            val statement = db.compileStatement("INSERT OR REPLACE INTO preview(source_key,ord,id,name,grp,logo,url,tvg_name,tvg_id,category,provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
             try {
                 channels.forEachIndexed { index, channel ->
                     statement.clearBindings()
@@ -120,10 +116,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
     fun read(sourceKey: String, limit: Int = 240): List<SportsChannel> {
         if (sourceKey.isBlank()) return emptyList()
         val safeLimit = limit.coerceIn(1, 500)
-        return readableDatabase.rawQuery(
-            "SELECT id,name,grp,logo,url,tvg_name,tvg_id,category,provider FROM preview WHERE source_key=? ORDER BY ord LIMIT $safeLimit",
-            arrayOf(sourceKey)
-        ).use { cursor ->
+        return readableDatabase.rawQuery("SELECT id,name,grp,logo,url,tvg_name,tvg_id,category,provider FROM preview WHERE source_key=? ORDER BY ord LIMIT $safeLimit", arrayOf(sourceKey)).use { cursor ->
             val out = ArrayList<SportsChannel>(safeLimit)
             while (cursor.moveToNext()) {
                 out += SportsChannel(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3)?.ifBlank { null }, cursor.getString(4), cursor.getString(5), cursor.getString(6), cursor.getString(7), cursor.getString(8))
