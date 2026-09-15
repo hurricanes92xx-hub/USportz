@@ -26,7 +26,7 @@ class USPortzApplication : Application(), ImageLoaderFactory {
             runCatching {
                 val source = SourceStore(this@USPortzApplication)
                 if (source.server.isNotBlank() && source.user.isNotBlank() && source.pass.isNotBlank()) {
-                    FastXtreamSportsBootstrap.bootstrap(this@USPortzApplication, source.server, source.user, source.pass)
+                    FastXtreamSportsBootstrap.bootstrap(this@USPortzApplication, source.server, source.user, source.pass, source.playlist)
                 }
             }
         }
