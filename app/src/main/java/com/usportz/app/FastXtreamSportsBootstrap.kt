@@ -23,12 +23,12 @@ object FastXtreamSportsBootstrap {
     private const val CONNECT_TIMEOUT_MS = 3_500
     private const val READ_TIMEOUT_MS = 12_000
     private const val BATCH_SIZE = 240
-    private const val FIRST_PUBLISH_SIZE = 48
+    private const val FIRST_PUBLISH_SIZE = 32
     private const val MAX_SPORT_CATEGORIES = 12
     private const val CATEGORY_CONCURRENCY = 6
     private val running = AtomicBoolean(false)
     private val sportsWords = listOf("sport", "sports", "espn", "fox sports", "fs1", "fs2", "tnt sports", "nbc sports", "cbs sports", "sportsnet", "tsn", "bein sports", "sky sport", "nfl", "nba", "mlb", "nhl", "ufc", "mma", "boxing", "fight", "soccer", "football", "basketball", "baseball", "hockey", "tennis", "golf", "racing", "motorsport", "formula 1", "f1", "nascar", "indycar", "wwe", "wrestling", "ppv", "event")
-    private val eventFeedWords = listOf("ncaaf", "ncaab", "ncaaw", "ncaa", "college football", "college basketball", "college", "nfl ", "nba ", "nhl ", "mlb ", "cfl ", "ufc ", "wwe ", "aew ", " ppv", "events-only", "event 01", "event 02", "event 03", "event 04", "feed")
+    private val eventFeedWords = listOf("ncaaf", "ncaab", "ncaaw", "ncaa", "college football", "college basketball", "college", "nfl ", "nba ", "nhl ", "mlb ", "cfl ", "ufc ", "wwe ", "aew", " ppv", "events-only", "event 01", "event 02", "event 03", "event 04", "feed")
 
     fun isRunning(): Boolean = running.get()
 
@@ -48,7 +48,7 @@ object FastXtreamSportsBootstrap {
             if (selected.isEmpty()) return@withContext 0
 
             // The preview has its own tiny database. This is the critical separation from
-            // the full 57k+ catalogue: publishing 48 sports rows can never replace the
+            // the full 57k+ catalogue: publishing a small sports window can never replace the
             // previous complete provider generation.
             val sourceKey = sha256("$base\u0000$user\u0000$pass\u0000$playlist")
             val store = SportsStartupPreviewStore(context)
@@ -64,8 +64,9 @@ object FastXtreamSportsBootstrap {
                 pending.clear()
             }
 
-            // Fetch category endpoints concurrently, but stream each response directly into
-            // the tiny preview DB. Publish a first 48-channel window as soon as it exists.
+            // A category that was selected because its category name is sports is itself
+            // authoritative sports context. Do not throw away provider-specific event names
+            // just because the individual stream name lacks "sports"/ESPN/etc.
             coroutineScope {
                 selected.map { category ->
                     async(Dispatchers.IO.limitedParallelism(CATEGORY_CONCURRENCY)) {
@@ -138,7 +139,7 @@ object FastXtreamSportsBootstrap {
         return 0
     }
     private fun parseStreams(input: InputStream, base: String, user: String, pass: String, categoryName: String, sink: (SportsChannel) -> Unit): Int = input.use { stream -> JsonReader(InputStreamReader(stream)).use { reader -> when (reader.peek()) { JsonToken.BEGIN_ARRAY -> readArray(reader, base, user, pass, categoryName, sink); JsonToken.BEGIN_OBJECT -> { var count = 0; reader.beginObject(); while (reader.hasNext()) { val key = reader.nextName(); if (key.equals("live_streams", true) || key.equals("streams", true) || key.equals("channels", true) || key.equals("data", true)) { if (reader.peek() == JsonToken.BEGIN_ARRAY) count += readArray(reader, base, user, pass, categoryName, sink) else reader.skipValue() } else reader.skipValue() }; reader.endObject(); count }; else -> 0 } } }
-    private fun readArray(reader: JsonReader, base: String, user: String, pass: String, categoryName: String, sink: (SportsChannel) -> Unit): Int { var count = 0; reader.beginArray(); while (reader.hasNext()) { val channel = readChannel(reader, base, user, pass, categoryName); if (channel != null && isResolverSportsChannel(channel)) { sink(channel); count++ } }; reader.endArray(); return count }
+    private fun readArray(reader: JsonReader, base: String, user: String, pass: String, categoryName: String, sink: (SportsChannel) -> Unit): Int { var count = 0; reader.beginArray(); while (reader.hasNext()) { val channel = readChannel(reader, base, user, pass, categoryName); if (channel != null && (isSportsCategory(categoryName) || isResolverSportsChannel(channel))) { sink(channel); count++ } }; reader.endArray(); return count }
     private fun readChannel(reader: JsonReader, base: String, user: String, pass: String, categoryName: String): SportsChannel? { if (reader.peek() != JsonToken.BEGIN_OBJECT) { reader.skipValue(); return null }; var id = ""; var name = ""; var tvgName = ""; var tvgId = ""; var logo: String? = null; var ext = "m3u8"; var direct = ""; var group = categoryName; var provider = "Xtream"; reader.beginObject(); while (reader.hasNext()) when (reader.nextName().lowercase()) { "stream_id", "id" -> id = nextString(reader); "name", "title" -> name = nextString(reader); "tvg_name", "tvg-name", "epg_channel_name" -> tvgName = nextString(reader); "epg_channel_id", "tvg_id", "tvg-id" -> tvgId = nextString(reader); "category_name", "category" -> group = nextString(reader).ifBlank { group }; "stream_icon", "icon", "logo" -> logo = nextString(reader).ifBlank { null }; "container_extension" -> ext = nextString(reader).ifBlank { "m3u8" }; "direct_source" -> direct = nextString(reader); "provider", "provider_name" -> provider = nextString(reader).ifBlank { provider }; else -> reader.skipValue() }; reader.endObject(); if (id.isBlank()) return null; val displayName = name.ifBlank { tvgName }.ifBlank { "Channel" }; val url = direct.ifBlank { "$base/live/$user/$pass/$id.$ext" }; return SportsChannel(id, displayName, group, logo, url, tvgName.ifBlank { displayName }, tvgId, group, provider) }
     private fun nextString(reader: JsonReader): String = when (reader.peek()) { JsonToken.NULL -> { reader.nextNull(); "" }; else -> runCatching { reader.nextString() }.getOrElse { reader.skipValue(); "" } }
     private fun requestText(url: String): String? = runCatching { val conn = URL(url).openConnection() as HttpURLConnection; try { conn.connectTimeout = CONNECT_TIMEOUT_MS; conn.readTimeout = READ_TIMEOUT_MS; conn.instanceFollowRedirects = true; conn.requestMethod = "GET"; conn.setRequestProperty("Accept", "application/json, text/plain, */*" ); conn.setRequestProperty("Accept-Encoding", "gzip"); conn.setRequestProperty("User-Agent", "USPortz/2.2 Android"); if (conn.responseCode !in 200..299) return null; openDecoded(conn).bufferedReader().use { it.readText().take(2 * 1024 * 1024) } } finally { conn.disconnect() } }.getOrNull()
