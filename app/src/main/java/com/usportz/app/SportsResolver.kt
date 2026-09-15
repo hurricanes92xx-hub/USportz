@@ -1,12 +1,11 @@
 package com.usportz.app
 
 /**
- * Event -> IPTV resolver. Uses the complete in-memory sports projection when
- * available, falling back to disk-side indexed retrieval only during cold start.
+ * Event -> IPTV resolver. Uses a small startup projection plus disk-side indexed retrieval
+ * so a 57k+ provider catalogue never has to be materialized in RAM just to resolve a game.
  * Results are cached and single-flighted per event + catalogue generation.
  *
- * The final ranking deliberately combines static evidence with learned channel
- * reliability. A stream that has repeatedly played successfully is preferred,
+ * The final ranking deliberately combines static evidence with learned channel reliability. A stream that has repeatedly played successfully is preferred,
  * while a stream with repeated failures is naturally pushed down the list.
  */
 object SportsResolver {
@@ -20,7 +19,10 @@ object SportsResolver {
     fun resolve(event: SportsEvent, channels: List<SportsChannel>, limit: Int = 8): List<WatchSource> = SportsResolutionCache.getOrResolve(event, channels, limit)
 
     internal fun resolveUncached(event: SportsEvent, channels: List<SportsChannel>, limit: Int = 8): List<WatchSource> {
-        val indexed = if (channels.isEmpty()) runCatching { SportsChannelBridge.indexedCandidates(event, INDEX_LIMIT) }.getOrDefault(emptyList()) else emptyList()
+        // Always supplement the small in-memory startup window with indexed SQL candidates.
+        // This is the same principle used by large-playlist players: render a bounded window,
+        // but search the full persistent index when resolving a specific event.
+        val indexed = runCatching { SportsChannelBridge.indexedCandidates(event, INDEX_LIMIT) }.getOrDefault(emptyList())
         val working = (channels + indexed).distinctBy { "${it.id}|${it.url}" }
         if (working.isEmpty()) return emptyList()
         val now = System.currentTimeMillis()
