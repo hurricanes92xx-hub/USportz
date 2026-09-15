@@ -14,7 +14,7 @@ object SportsCatalog {
         "MMA" to listOf("ufc", "bellator", "pfl", "mma"),
         "Boxing" to listOf("boxing", "wbc", "wba", "wbo", "ibf"),
         "Wrestling" to listOf("wwe", "aew", "tna", "roh", "nxt", "raw", "smackdown", "wrestling"),
-        "Motorsports" to listOf("nascar", "indycar", "formula 1", "formula one", "motogp", "motorsport"),
+        "Motorsports" to listOf("nascar", "indycar", "irl", "formula 1", "formula one", "f1", "motogp", "motorsport", "racing", "grand prix"),
         "Tennis" to listOf("atp", "wta", "tennis", "us open", "wimbledon"),
         "Golf" to listOf("pga", "lpga", "golf", "masters", "ryder cup"),
         "Racing" to listOf("monster jam", "drag racing", "nhra", "racing")
