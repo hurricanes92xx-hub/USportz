@@ -25,6 +25,7 @@ data class SportsChannel(val id: String, val name: String, val group: String, va
 object SportsChannelBridge {
     private const val CACHE_TTL_MS = 15 * 60 * 1000L
     private const val BATCH_SIZE = 2000
+    private const val FIRST_PUBLISH_SIZE = 256
     @Volatile private var cached: List<SportsChannel> = emptyList()
     @Volatile private var cachedAt = 0L
     @Volatile private var cachedSourceKey = ""
@@ -84,14 +85,52 @@ object SportsChannelBridge {
     private suspend fun refreshInternal(context: Context, server: String, user: String, pass: String, playlist: String, sourceKey: String) = withContext(Dispatchers.IO) {
         if (!indexing.compareAndSet(false, true)) return@withContext
         try {
-            val store = SportsChannelDiskStore(context); var generation: Long? = null; var count = 0
-            fun accept(channel: SportsChannel) { if (generation == null) generation = store.beginGeneration(sourceKey); pending += channel; count++; if (pending.size >= BATCH_SIZE) flush(store, sourceKey, generation!!) }
+            val store = SportsChannelDiskStore(context)
+            val hadActiveSnapshot = store.activeCount(sourceKey) > 0
+            var generation: Long? = null
+            var count = 0
+            var firstPublished = hadActiveSnapshot
+            fun publishPreviewIfReady() {
+                val gen = generation ?: return
+                if (!firstPublished && count >= FIRST_PUBLISH_SIZE) {
+                    flush(store, sourceKey, gen)
+                    store.activate(sourceKey, gen, count)
+                    val preview = store.activeSnapshot(sourceKey)
+                    if (preview.isNotEmpty()) {
+                        cached = preview
+                        cachedAt = System.currentTimeMillis()
+                        cachedSourceKey = sourceKey
+                    }
+                    firstPublished = true
+                }
+            }
+            fun accept(channel: SportsChannel) {
+                if (generation == null) generation = store.beginGeneration(sourceKey)
+                pending += channel
+                count++
+                if (pending.size >= BATCH_SIZE) flush(store, sourceKey, generation!!)
+                publishPreviewIfReady()
+            }
             pending.clear()
             if (server.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
-                for (base in normalizedServerCandidates(server)) { val before = count; val categories = runCatching { fetchLiveCategories(base, user, pass) }.getOrDefault(emptyMap()); runCatching { fetchLiveStreamsStreaming(base, user, pass, categories, ::accept) }; if (count > before) break }
-                if (count == 0) for (base in normalizedServerCandidates(server)) { val before = count; runCatching { fetchM3uStreaming("$base/get.php?${credentialsQuery(user, pass)}&type=m3u_plus&output=ts", ::accept) }; if (count > before) break }
+                for (base in normalizedServerCandidates(server)) {
+                    val before = count
+                    val categories = runCatching { fetchLiveCategories(base, user, pass) }.getOrDefault(emptyMap())
+                    runCatching { fetchLiveStreamsStreaming(base, user, pass, categories, ::accept) }
+                    if (count > before) break
+                }
+                if (count == 0) for (base in normalizedServerCandidates(server)) {
+                    val before = count
+                    runCatching { fetchM3uStreaming("$base/get.php?${credentialsQuery(user, pass)}&type=m3u_plus&output=ts", ::accept) }
+                    if (count > before) break
+                }
             } else if (playlist.isNotBlank()) runCatching { fetchM3uStreaming(playlist, ::accept) }
-            if (generation != null && count > 0) { flush(store, sourceKey, generation!!); store.activate(sourceKey, generation!!, count); val fresh = store.activeSnapshot(sourceKey); if (fresh.isNotEmpty()) { cached = fresh; cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey } }
+            if (generation != null && count > 0) {
+                flush(store, sourceKey, generation!!)
+                store.activate(sourceKey, generation!!, count)
+                val fresh = store.activeSnapshot(sourceKey)
+                if (fresh.isNotEmpty()) { cached = fresh; cachedAt = System.currentTimeMillis(); cachedSourceKey = sourceKey }
+            }
         } finally { pending.clear(); indexing.set(false) }
     }
 
