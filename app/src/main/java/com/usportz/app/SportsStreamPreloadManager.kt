@@ -185,10 +185,13 @@ object SportsStreamPreloadManager {
             mainHandler.post { setCurrentPlayingUrl(url) }
             return
         }
-        val index = urls.indexOf(url)
+        val index = urls.indexOf(url.trim())
         if (index >= 0) {
             status.currentIndex = index
-            managerRef.get()?.setCurrentPlayingIndex(index)
+            managerRef.get()?.let {
+                it.setCurrentPlayingIndex(index)
+                it.invalidate()
+            }
         }
     }
 
