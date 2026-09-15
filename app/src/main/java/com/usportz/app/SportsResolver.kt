@@ -70,16 +70,12 @@ object SportsResolver {
         if (healthPenalty > 0) { score -= healthPenalty; reasons += "provider health -$healthPenalty" }
         if (noiseWords.any { metadata.contains(it) } && distinctTeams == 0 && network == null && exact == null && labelMatch == null) score -= 35
 
-        // A preferred network is concrete evidence even when the schedule feed
-        // omitted an explicit broadcast field. This is important for sports such
-        // as tennis/golf where the event feed often has no broadcaster populated.
         val concreteEvidence = distinctTeams > 0 || teamHits > 0 || exact != null || network != null
         if (!concreteEvidence && labelMatch != null && leagueMatch) {
             score = score.coerceAtMost(59)
             reasons += "generic fallback tier"
         }
 
-        // A generic sports label by itself is too weak to become a watch source.
         if (!concreteEvidence && !leagueMatch && exact == null) return null
 
         val capped = score.coerceAtMost(100)
@@ -151,8 +147,12 @@ object SportsResolver {
     private fun tokenMatch(haystack: String, needle: String): Boolean {
         val h = normalize(haystack); val n = normalize(needle)
         if (n.isBlank()) return false
+        if (h == n) return true
         val padded = " $h "
-        return h == n || padded.contains(" $n ")
+        if (!padded.contains(" $n ")) return false
+        if (!h.startsWith("$n ")) return true
+        val suffix = h.removePrefix("$n ").trim()
+        return suffix in qualityWords || suffix in setOf("network", "channel")
     }
     private fun normalize(v: String): String = SportsBroadcasts.normalize(v)
     private fun compact(v: String): String = v.filter(Char::isLetterOrDigit)
