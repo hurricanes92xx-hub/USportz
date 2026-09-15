@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.time.Instant
 
 /** Small last-known schedule snapshot so a cold start never has to begin with a blank screen. */
 object SportsScheduleDiskCache {
@@ -14,28 +15,30 @@ object SportsScheduleDiskCache {
         val file = File(context.filesDir, FILE_NAME)
         if (!file.exists()) return emptyList()
         val array = JSONArray(file.readText())
-        buildList {
+        val events = buildList {
             for (i in 0 until array.length()) {
                 val o = array.optJSONObject(i) ?: continue
                 val competitors = o.optJSONArray("competitors")?.let { a -> buildList { for (j in 0 until a.length()) add(a.optString(j)) } } ?: emptyList()
                 val logos = o.optJSONArray("competitorLogos")?.let { a -> buildList { for (j in 0 until a.length()) add(a.optString(j)) } } ?: emptyList()
                 val start = o.optString("startTime")
                 if (o.optString("id").isBlank() || start.isBlank()) continue
-                add(SportsEvent(
+                val event = SportsEvent(
                     id = o.optString("id"), sport = o.optString("sport"), league = o.optString("league"),
                     name = o.optString("name"), shortName = o.optString("shortName"), state = o.optString("state", "pre"),
                     startTime = start, competitors = competitors, competitorLogos = logos,
                     leagueLogo = o.optString("leagueLogo").ifBlank { null }, detail = o.optString("detail"),
                     broadcast = o.optString("broadcast")
-                ))
+                )
+                if (isPlausible(event)) add(event)
             }
-        }.take(MAX_EVENTS)
+        }
+        dedupe(events).take(MAX_EVENTS)
     }.getOrDefault(emptyList())
 
     fun write(context: Context, events: List<SportsEvent>) {
         runCatching {
             val array = JSONArray()
-            events.take(MAX_EVENTS).forEach { event ->
+            dedupe(events.filter(::isPlausible)).take(MAX_EVENTS).forEach { event ->
                 val o = JSONObject()
                     .put("id", event.id)
                     .put("sport", event.sport)
@@ -60,4 +63,33 @@ object SportsScheduleDiskCache {
             }
         }
     }
+
+    private fun isPlausible(event: SportsEvent): Boolean {
+        if (event.sport.equals("racing", true)) {
+            val text = (event.name + " " + event.league + " " + event.competitors.joinToString(" ")).lowercase()
+            val collegeTeamMarkers = listOf("university", "college", "ncaa", "knights", "pioneers", "bulldogs", "wildcats", "spartans", "terriers", "bears")
+            if (collegeTeamMarkers.any(text::contains)) return false
+        }
+        return true
+    }
+
+    private fun dedupe(events: List<SportsEvent>): List<SportsEvent> {
+        val best = LinkedHashMap<String, SportsEvent>()
+        for (event in events) {
+            val teams = event.competitors.map(::normalize).filter { it.isNotBlank() }.sorted().joinToString("|")
+            val minute = runCatching { Instant.parse(event.startTime).toEpochMilli() / 60_000L }.getOrElse { event.startTime.take(16) }
+            val key = "${normalize(event.sport)}|$teams|$minute"
+            val old = best[key]
+            if (old == null || quality(event) > quality(old)) best[key] = event
+        }
+        return best.values.toList()
+    }
+
+    private fun quality(event: SportsEvent): Int =
+        event.competitorLogos.count { it.isNotBlank() } * 10 +
+            (if (event.leagueLogo?.isNotBlank() == true) 4 else 0) +
+            (if (event.broadcast.isNotBlank()) 3 else 0) +
+            (if (event.detail.isNotBlank()) 1 else 0)
+
+    private fun normalize(value: String): String = value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
 }
