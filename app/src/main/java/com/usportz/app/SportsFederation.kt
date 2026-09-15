@@ -10,22 +10,27 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Wave 2: additive multi-provider federation. Provider failures never erase another provider's data. */
+/** Additive federation for schedule coverage that is not already supplied by the primary ESPN feeds. */
 object SportsFederation {
     private const val BASE = "https://api.sportspuff.net"
     private const val TIMEOUT = 4500
 
+    // ESPN already supplies these in SportsSchedule. Keeping them here caused duplicate games
+    // (including home/away reversals) when both providers returned the same matchup.
+    private val supplementalSports = listOf("atp", "wta", "cycling", "ipl", "mlc")
+
     suspend fun loadToday(): List<SportsEvent> = withContext(Dispatchers.IO) {
         coroutineScope {
-            listOf("mlb", "nba", "nfl", "nhl", "wnba", "mls", "atp", "wta", "cycling", "ipl", "mlc")
-                .map { sport -> async { fetchSport(sport) } }
-                .awaitAll().flatten()
+            supplementalSports.map { sport -> async { fetchSport(sport) } }
+                .awaitAll()
+                .flatten()
+                .dedupe()
         }
     }
 
     private fun fetchSport(sport: String): List<SportsEvent> = runCatching {
         val body = get("$BASE/v1/schedule/$sport/today?tz=et")
-        parse(body, sport)
+        parse(body, sport).filter(::plausible)
     }.getOrDefault(emptyList())
 
     private fun get(url: String): String {
@@ -80,6 +85,27 @@ object SportsFederation {
         }
     }.getOrDefault(emptyList())
 
+    private fun plausible(event: SportsEvent): Boolean {
+        val text = (event.name + " " + event.league + " " + event.competitors.joinToString(" ")).lowercase()
+        if (event.sport == "cycling" && listOf("soccer", "football", "basketball", "baseball", "hockey", "ncaa", "university", "college").any(text::contains)) return false
+        return true
+    }
+
+    private fun List<SportsEvent>.dedupe(): List<SportsEvent> {
+        val best = LinkedHashMap<String, SportsEvent>()
+        for (event in this) {
+            val teams = event.competitors.map(::normalize).filter { it.isNotBlank() }.sorted().joinToString("|")
+            val minute = runCatching { java.time.Instant.parse(event.startTime).toEpochMilli() / 60_000L }.getOrElse { event.startTime.take(16) }
+            val key = "${event.sport}|$teams|$minute|${normalize(event.name)}"
+            val old = best[key]
+            if (old == null || quality(event) > quality(old)) best[key] = event
+        }
+        return best.values.toList()
+    }
+
+    private fun quality(event: SportsEvent): Int = event.competitorLogos.count { it.isNotBlank() } * 10 +
+        (if (event.broadcast.isNotBlank()) 3 else 0) + (if (event.detail.isNotBlank()) 1 else 0)
+
     private fun firstTeam(o: JSONObject, vararg keys: String): String {
         for (key in keys) {
             val value = o.opt(key)
@@ -110,11 +136,10 @@ object SportsFederation {
     }
 
     private fun teamName(o: JSONObject): String = first(o, "displayName", "name", "fullName", "shortName", "teamName", "abbreviation", "abbr")
-
     private fun splitTitle(value: String): List<String> = value.split(" at ", " vs ", " v ", " - ", " @ ").map(String::trim).filter(String::isNotBlank).take(2)
+    private fun normalize(value: String): String = value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
 }
 
-/** Wave 2: quality variants and adaptive source health without retaining stream URLs in memory. */
 data class StreamVariant(
     val url: String,
     val kind: String,
