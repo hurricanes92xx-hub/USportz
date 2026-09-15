@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -157,6 +158,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsChannel>, now: Long, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, openEvent: (SportsEvent) -> Unit, favorites: MutableMap<String, Boolean>? = null) {
     val ranked by produceState<List<SportsResolver.WatchSource>>(emptyList(), event.id, channels) {
         value = withContext(Dispatchers.Default) { SportsResolver.resolve(event, channels, 16) }
