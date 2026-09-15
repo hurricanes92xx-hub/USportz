@@ -31,9 +31,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
@@ -63,37 +61,30 @@ class RichPlayerActivity : ComponentActivity() {
 
         val player = remember(activeUrl) {
             startedAt = System.currentTimeMillis()
-            val dataSourceFactory = DefaultHttpDataSource.Factory()
-                .setConnectTimeoutMs(5_000).setReadTimeoutMs(12_000)
-                .setAllowCrossProtocolRedirects(true).setUserAgent("USPortz/2.0")
-            val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(1_500, 12_000, 800, 1_500)
-                .setPrioritizeTimeOverSizeThresholds(true).build()
+            val preloadSource = SportsStreamPreloadManager.mediaSource(context, activeUrl)
             val renderers = DefaultRenderersFactory(context)
                 .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                 .setEnableDecoderFallback(true)
-            ExoPlayer.Builder(context, renderers)
-                .setBandwidthMeter(DefaultBandwidthMeter.getSingletonInstance(context))
-                .setLoadControl(loadControl).build().apply {
-                    val uri = Uri.parse(activeUrl)
-                    val path = uri.toString().substringBefore('?').lowercase()
-                    val kind = StreamClassifier.kind(activeUrl)
-                    val looksHls = kind == StreamKind.HLS || path.contains("hls") || path.contains("m3u8")
-                    val item = MediaItem.Builder().setUri(uri)
-                        .setMediaMetadata(MediaMetadata.Builder().setTitle("USPortz Live").build()).build()
-                    if (looksHls) setMediaSource(HlsMediaSource.Factory(dataSourceFactory).createMediaSource(item))
-                    else setMediaItem(item)
-                    addListener(object : Player.Listener {
-                        override fun onPlayerError(e: PlaybackException) { error = e.errorCodeName }
-                        override fun onPlaybackStateChanged(state: Int) {
-                            if (state == Player.STATE_READY) {
-                                PlaybackStartupMeter.record(startedAt, System.currentTimeMillis(), true)
-                                error = null
-                            }
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(1_500, 12_000, 800, 1_500)
+                .setPrioritizeTimeOverSizeThresholds(true).build()
+            SportsStreamPreloadManager.buildPlayer(context).apply {
+                val uri = Uri.parse(activeUrl)
+                val item = MediaItem.Builder().setUri(uri)
+                    .setMediaMetadata(MediaMetadata.Builder().setTitle("USPortz Live").build()).build()
+                if (preloadSource != null) setMediaSource(preloadSource) else setMediaItem(item)
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(e: PlaybackException) { error = e.errorCodeName }
+                    override fun onPlaybackStateChanged(state: Int) {
+                        if (state == Player.STATE_READY) {
+                            PlaybackStartupMeter.record(startedAt, System.currentTimeMillis(), true)
+                            error = null
                         }
-                    })
-                    prepare(); playWhenReady = true
-                }
+                    }
+                })
+                SportsStreamPreloadManager.setCurrentPlayingUrl(activeUrl)
+                prepare(); playWhenReady = true
+            }
         }
         DisposableEffect(player) { onDispose { player.release() } }
 
