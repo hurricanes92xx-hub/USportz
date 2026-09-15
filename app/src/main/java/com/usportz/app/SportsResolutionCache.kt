@@ -6,18 +6,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 
-/** Single-flight, bounded cache for event -> channel resolution. UI callers share one computation. */
+/** Single-flight, bounded cache for event -> channel resolution. UI callers share one computation per catalogue generation. */
 object SportsResolutionCache {
     private data class Entry(val value: List<SportsResolver.WatchSource>, val expiresAt: Long)
-    private const val TTL_MS = 60_000L
-    private const val NEGATIVE_TTL_MS = 15_000L
-    private const val MAX_ENTRIES = 120
+    private const val TTL_MS = 5 * 60_000L
+    private const val NEGATIVE_TTL_MS = 30_000L
+    private const val MAX_ENTRIES = 240
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val entries = LinkedHashMap<String, Entry>(16, 0.75f, true)
     private val inFlight = HashMap<String, Deferred<List<SportsResolver.WatchSource>>>()
 
     suspend fun getOrResolve(event: SportsEvent, channels: List<SportsChannel>, limit: Int = 8): List<SportsResolver.WatchSource> {
-        val key = SportsEventFingerprint.of(event) + ":" + limit
+        val generation = SportsChannelBridge.currentCatalogGeneration()
+        val source = SportsChannelBridge.currentSourceKey()
+        val key = "$source:$generation:${SportsEventFingerprint.of(event)}:$limit"
         val now = System.currentTimeMillis()
         synchronized(this) {
             val cached = entries[key]
@@ -30,7 +32,7 @@ object SportsResolutionCache {
             val existing = inFlight[key]
             if (existing != null) work = existing
             else {
-                work = scope.async { SportsResolver.resolve(event, channels, limit) }
+                work = scope.async { SportsResolver.resolveUncached(event, channels, limit) }
                 inFlight[key] = work
             }
         }
