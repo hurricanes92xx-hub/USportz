@@ -5,7 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /** Small SQLite catalog used as the fast startup source of truth for sports channels. */
-class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "usportz_channels.db", null, 3) {
+class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "usportz_channels.db", null, 4) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         if (!db.isReadOnly) runCatching { db.enableWriteAheadLogging() }
@@ -24,6 +24,13 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context, "uspo
             db.execSQL("ALTER TABLE channels ADD COLUMN tvg_id TEXT NOT NULL DEFAULT ''")
             db.execSQL("ALTER TABLE channels ADD COLUMN category TEXT NOT NULL DEFAULT ''")
             db.execSQL("ALTER TABLE channels ADD COLUMN provider TEXT NOT NULL DEFAULT ''")
+        }
+        if (oldVersion < 4) {
+            // Reclassify existing snapshots immediately. The classifier was broadened
+            // to understand provider categories such as SPORTS/US SPORTS, so an app
+            // upgrade must not require a full playlist re-download before those rows
+            // become visible in Sports TV.
+            db.execSQL("UPDATE channels SET is_sports=1 WHERE lower(name) LIKE '%espn%' OR lower(name) LIKE '%fox sports%' OR lower(name) LIKE '%fs1%' OR lower(name) LIKE '%fs2%' OR lower(name) LIKE '%cbs sports%' OR lower(name) LIKE '%cbssn%' OR lower(name) LIKE '%nbc sports%' OR lower(name) LIKE '%sportsnet%' OR lower(name) LIKE '%tsn%' OR lower(name) LIKE '%rds%' OR lower(name) LIKE '%tva sports%' OR lower(name) LIKE '%mlb network%' OR lower(name) LIKE '%nfl network%' OR lower(name) LIKE '%nba tv%' OR lower(name) LIKE '%nhl network%' OR lower(name) LIKE '%golf channel%' OR lower(name) LIKE '%tennis channel%' OR lower(name) LIKE '%bally sports%' OR lower(name) LIKE '%yes network%' OR lower(name) LIKE '%msg network%' OR lower(name) LIKE '%sny%' OR lower(name) LIKE '%root sports%' OR lower(name) LIKE '%fanduel sports%' OR lower(name) LIKE '%acc network%' OR lower(name) LIKE '%accn%' OR lower(name) LIKE '%sec network%' OR lower(name) LIKE '%secn%' OR lower(name) LIKE '%big ten network%' OR lower(name) LIKE '%btn%' OR lower(name) LIKE '%sports%' OR lower(grp) LIKE '%sport%' OR lower(category) LIKE '%sport%' OR lower(grp) LIKE '%ppv%' OR lower(category) LIKE '%ppv%'")
         }
     }
 
