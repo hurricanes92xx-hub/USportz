@@ -6,7 +6,7 @@ data class SportsNetwork(val key: String, val label: String, val aliases: List<S
 object SportsNetworkCatalog {
     private const val ESPN = "https://a.espncdn.com/i/teamlogos/leagues/500/espn.png"
     private const val TSN = "https://upload.wikimedia.org/wikipedia/commons/3/3a/TSN_%282014%29_logo.svg"
-    private val EVENT_FEEDS = SportsNetwork("eventfeeds", "Sports Event Feeds", listOf(), "https://a.espncdn.com/i/teamlogos/leagues/500/espn.png")
+    private val EVENT_FEEDS = SportsNetwork("eventfeeds", "Sports Event Feeds", listOf(), ESPN)
 
     val networks: List<SportsNetwork> = listOf(
         SportsNetwork("espn", "ESPN", listOf("espn", "espn hd", "espn us", "espn usa"), ESPN),
@@ -34,6 +34,7 @@ object SportsNetworkCatalog {
         SportsNetwork("cfl", "CFL+", listOf("cfl+", "cfl plus", "cfl plus hd"), "https://upload.wikimedia.org/wikipedia/en/5/5b/Canadian_Football_League_logo.svg"),
         SportsNetwork("mlbnetwork", "MLB Network", listOf("mlb network", "mlb net", "mlb network hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png"),
         SportsNetwork("nflnetwork", "NFL Network", listOf("nfl network", "nfl net", "nfl network hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png"),
+        SportsNetwork("nbatv", "NBA TV", listOf("nba tv", "nbatv", "nba tv hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/nba.png"),
         SportsNetwork("nhlnetwork", "NHL Network", listOf("nhl network", "nhl net", "nhl network hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png"),
         SportsNetwork("golftv", "Golf Channel", listOf("golf channel", "golf tv", "golf channel hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/golf.png"),
         SportsNetwork("tennis", "Tennis Channel", listOf("tennis channel", "tennis channel hd"), "https://a.espncdn.com/i/teamlogos/leagues/500/tennis.png"),
@@ -46,6 +47,7 @@ object SportsNetworkCatalog {
     )
 
     private val eventFeedWords = listOf("ncaaf", "ncaab", "ncaaw", "ncaa", "college football", "college basketball", "college baseball", "college hockey", "nfl ", "nba ", "nhl ", "mlb ", "cfl ", "ufc ", "wwe ", "aew ", " ppv", "events-only", "event 01", "event 02", "event 03", "event 04", "feed")
+    private val sportsCategoryWords = listOf("sport", "sports", "sports tv", "sports television", "live sports", "us sports", "usa sports", "sports hd", "sports fhd", "sports 4k", "ppv", "live events", "events")
 
     fun find(channel: SportsChannel): SportsNetwork? {
         val haystack = normalize(listOf(channel.name, channel.tvgName, channel.tvgId, channel.group, channel.category, channel.provider).joinToString(" "))
@@ -55,6 +57,7 @@ object SportsNetworkCatalog {
     fun isSportsChannel(channel: SportsChannel): Boolean {
         if (find(channel) != null) return true
         val metadata = normalize(listOf(channel.name, channel.tvgName, channel.tvgId, channel.group, channel.category, channel.provider).joinToString(" "))
+        if (sportsCategoryWords.any { matchesAlias(metadata, normalize(it)) || metadata.contains(" ${normalize(it)} ") }) return true
         return eventFeedWords.any { metadata.contains(normalize(it)) }
     }
 
