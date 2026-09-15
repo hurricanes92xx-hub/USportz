@@ -14,7 +14,7 @@ object SportsChannelIndexQuery {
         val db = runCatching { SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY) }.getOrNull() ?: return emptyList()
         db.use {
             val safeTerms = terms.map(::normalize).filter { it.length >= 3 }.distinct().take(12)
-            val base = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation WHERE c.source_key=?"
+            val base = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation AND m.complete=1 WHERE c.source_key=?"
             if (safeTerms.isNotEmpty()) {
                 val clauses = safeTerms.joinToString(" OR ") { "(LOWER(c.name) LIKE ? OR LOWER(c.tvg_name) LIKE ? OR LOWER(c.tvg_id) LIKE ? OR LOWER(c.grp) LIKE ? OR LOWER(c.category) LIKE ? OR LOWER(c.provider) LIKE ?)" }
                 val args = ArrayList<String>(1 + safeTerms.size * 6)
