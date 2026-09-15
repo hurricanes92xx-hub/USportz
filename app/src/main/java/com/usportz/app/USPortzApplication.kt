@@ -27,6 +27,9 @@ class USPortzApplication : Application(), ImageLoaderFactory {
                 val source = SourceStore(this@USPortzApplication)
                 if (source.server.isNotBlank() && source.user.isNotBlank() && source.pass.isNotBlank()) {
                     FastXtreamSportsBootstrap.bootstrap(this@USPortzApplication, source.server, source.user, source.pass, source.playlist)
+                    // Publish the isolated startup preview into the in-memory bridge immediately.
+                    // This does not activate or replace the full provider generation.
+                    SportsChannelBridge.load(this@USPortzApplication, false)
                 }
             }
         }
