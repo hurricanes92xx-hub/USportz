@@ -4,6 +4,10 @@ package com.usportz.app
  * Event -> IPTV resolver. Uses the complete in-memory sports projection when
  * available, falling back to disk-side indexed retrieval only during cold start.
  * Results are cached and single-flighted per event + catalogue generation.
+ *
+ * The final ranking deliberately combines static evidence with learned channel
+ * reliability. A stream that has repeatedly played successfully is preferred,
+ * while a stream with repeated failures is naturally pushed down the list.
  */
 object SportsResolver {
     data class WatchSource(val channel: SportsChannel, val score: Int, val reasons: List<String>)
@@ -61,6 +65,15 @@ object SportsResolver {
         if (sportMatch) { score += 8; reasons += "sport category" }
 
         if (channel.url.isNotBlank()) { score += 3; reasons += "playable URL" }
+
+        // Channel DNA is persistent across catalogue refreshes. Use it as a small
+        // tie-breaker rather than allowing history to override strong event evidence.
+        val dnaScore = runCatching { ChannelDnaRuntime.score(channel) }.getOrDefault(50).coerceIn(0, 100)
+        val dnaBonus = ((dnaScore - 50) / 5).coerceIn(-10, 10)
+        if (dnaBonus > 0) reasons += "learned reliability +$dnaBonus"
+        else if (dnaBonus < 0) reasons += "learned reliability $dnaBonus"
+        score += dnaBonus
+
         val healthPenalty = ProviderHealth.penalty(channel.provider, now)
         if (healthPenalty > 0) { score -= healthPenalty; reasons += "provider health -$healthPenalty" }
         if (noiseWords.any { metadata.contains(it) } && distinctTeams == 0 && network == null && exact == null && labelMatch == null) score -= 35
