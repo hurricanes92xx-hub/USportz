@@ -24,10 +24,10 @@ object FastXtreamSportsBootstrap {
     private const val READ_TIMEOUT_MS = 12_000
     private const val BATCH_SIZE = 240
     private const val FIRST_PUBLISH_SIZE = 32
-    private const val MAX_SPORT_CATEGORIES = 12
+    private const val MAX_SPORT_CATEGORIES = 20
     private const val CATEGORY_CONCURRENCY = 6
     private val running = AtomicBoolean(false)
-    private val sportsWords = listOf("sport", "sports", "espn", "fox sports", "fs1", "fs2", "tnt sports", "nbc sports", "cbs sports", "sportsnet", "tsn", "bein sports", "sky sport", "nfl", "nba", "mlb", "nhl", "ufc", "mma", "boxing", "fight", "soccer", "football", "basketball", "baseball", "hockey", "tennis", "golf", "racing", "motorsport", "formula 1", "f1", "nascar", "indycar", "wwe", "wrestling", "ppv", "event")
+    private val sportsWords = listOf("sport", "sports", "espn", "fox sports", "fs1", "fs2", "tnt sports", "nbc sports", "cbs sports", "sportsnet", "tsn", "rds", "tva sports", "cbc sports", "nfl", "nba", "mlb", "nhl", "ufc", "mma", "boxing", "fight", "soccer", "football", "basketball", "baseball", "hockey", "tennis", "golf", "racing", "motorsport", "formula 1", "f1", "nascar", "indycar", "wwe", "wrestling", "ppv", "event")
     private val eventFeedWords = listOf("ncaaf", "ncaab", "ncaaw", "ncaa", "college football", "college basketball", "college", "nfl ", "nba ", "nhl ", "mlb ", "cfl ", "ufc ", "wwe ", "aew", " ppv", "events-only", "event 01", "event 02", "event 03", "event 04", "feed")
 
     fun isRunning(): Boolean = running.get()
@@ -39,34 +39,30 @@ object FastXtreamSportsBootstrap {
             if (base.isBlank() || user.isBlank() || pass.isBlank()) return@withContext 0
             val categories = fetchCategories(base, user, pass)
             if (categories.isEmpty()) return@withContext 0
-            // Startup is about getting playable sports into the UI, not exhaustively scanning
-            // every sports-looking bucket. Prefer the most specific/likely categories first.
+            // Explicitly favor U.S./Canadian network buckets and event/PPV buckets. This is
+            // intentionally broader than a generic "sports" filter because those categories
+            // are what get a North American viewer to a playable source in seconds.
             val selected = categories
                 .filter { isSportsCategory(it.name) }
-                .sortedByDescending { categoryPriority(it.name) }
+                .sortedWith(compareByDescending<Category> { categoryPriority(it.name) }.thenBy { it.name.lowercase() })
                 .take(MAX_SPORT_CATEGORIES)
             if (selected.isEmpty()) return@withContext 0
 
-            // The preview has its own tiny database. This is the critical separation from
-            // the full 57k+ catalogue: publishing a small sports window can never replace the
-            // previous complete provider generation.
             val sourceKey = sha256("$base\u0000$user\u0000$pass\u0000$playlist")
             val store = SportsStartupPreviewStore(context)
-            store.clear(sourceKey)
+            // Do not clear a useful preview. The ranked merge lets the targeted bootstrap
+            // improve it while the full streaming importer continues in parallel.
             var total = 0
             var pending = ArrayList<SportsChannel>(BATCH_SIZE)
 
             fun flush() {
                 if (pending.isEmpty()) return
                 val batch = pending.toList()
-                store.append(sourceKey, total, batch)
+                store.mergeRanked(sourceKey, batch)
                 total += batch.size
                 pending.clear()
             }
 
-            // A category that was selected because its category name is sports is itself
-            // authoritative sports context. Do not throw away provider-specific event names
-            // just because the individual stream name lacks "sports"/ESPN/etc.
             coroutineScope {
                 selected.map { category ->
                     async(Dispatchers.IO.limitedParallelism(CATEGORY_CONCURRENCY)) {
@@ -91,10 +87,11 @@ object FastXtreamSportsBootstrap {
     private fun categoryPriority(name: String): Int {
         val n = name.lowercase()
         return when {
-            listOf("espn", "fox sports", "fs1", "fs2", "nbc sports", "cbs sports", "sportsnet", "tsn", "tnt sports").any { n.contains(it) } -> 100
-            listOf("nfl", "nba", "mlb", "nhl", "ufc", "wwe", "tennis", "golf", "soccer", "football", "basketball", "baseball", "hockey").any { n.contains(it) } -> 90
-            listOf("ncaa", "college", "ppv", "event", "feed").any { n.contains(it) } -> 80
-            n.contains("sport") -> 70
+            listOf("espn", "fox sports", "fs1", "fs2", "nbc sports", "cbs sports", "sportsnet", "tsn", "rds", "tva sports", "cbc sports", "tnt sports").any { n.contains(it) } -> 130
+            listOf("usa sports", "us sports", "usa", "canada sports", "canadian sports", "north america", "american sports").any { n.contains(it) } -> 125
+            listOf("nfl", "nba", "mlb", "nhl", "ufc", "wwe", "tennis", "golf", "soccer", "football", "basketball", "baseball", "hockey").any { n.contains(it) } -> 105
+            listOf("ncaa", "college", "ppv", "event", "feed").any { n.contains(it) } -> 95
+            n.contains("sport") -> 80
             else -> 50
         }
     }
