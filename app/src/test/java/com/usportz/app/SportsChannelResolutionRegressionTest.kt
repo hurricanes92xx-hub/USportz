@@ -2,9 +2,17 @@ package com.usportz.app
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class SportsChannelResolutionRegressionTest {
+    @Before
+    fun clearResolverCache() {
+        // Tests intentionally supply different channel snapshots for the same
+        // event fingerprint; isolate the process-wide production cache.
+        SportsResolutionCache.clear()
+    }
+
     private fun channel(name: String, group: String = "Sports"): SportsChannel = SportsChannel(
         id = name,
         name = name,
@@ -12,6 +20,7 @@ class SportsChannelResolutionRegressionTest {
         logo = null,
         url = "https://example.test/$name.m3u8",
         tvgName = name,
+        tvgId = name,
         category = group,
         provider = "Xtream"
     )
