@@ -4,14 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
-/**
- * Tiny cold-start cache for the sports experience.
- *
- * This is deliberately separate from the full provider snapshot. A targeted Xtream
- * sports import can publish here without ever changing the 57k+ catalogue's active
- * generation. The full importer can continue independently and atomically replace
- * the real catalogue when it is complete.
- */
+/** Tiny cold-start cache for the sports experience. */
 class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
     context.applicationContext,
     "usportz_sports_preview.db",
@@ -25,8 +18,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(
-            """
+        db.execSQL("""
             CREATE TABLE preview (
                 source_key TEXT NOT NULL,
                 ord INTEGER NOT NULL,
@@ -41,8 +33,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
                 provider TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY(source_key, ord)
             )
-            """.trimIndent()
-        )
+        """.trimIndent())
         db.execSQL("CREATE INDEX idx_preview_source_id ON preview(source_key, id)")
     }
 
@@ -50,35 +41,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
 
     fun replaceBatch(sourceKey: String, batch: List<SportsChannel>) {
         if (sourceKey.isBlank() || batch.isEmpty()) return
-        val db = writableDatabase
-        db.beginTransactionNonExclusive()
-        try {
-            val statement = db.compileStatement(
-                "INSERT OR REPLACE INTO preview(source_key,ord,id,name,grp,logo,url,tvg_name,tvg_id,category,provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
-            )
-            try {
-                batch.forEachIndexed { index, channel ->
-                    statement.clearBindings()
-                    statement.bindString(1, sourceKey)
-                    statement.bindLong(2, index.toLong())
-                    statement.bindString(3, channel.id)
-                    statement.bindString(4, channel.name)
-                    statement.bindString(5, channel.group)
-                    if (channel.logo.isNullOrBlank()) statement.bindNull(6) else statement.bindString(6, channel.logo)
-                    statement.bindString(7, channel.url)
-                    statement.bindString(8, channel.tvgName)
-                    statement.bindString(9, channel.tvgId)
-                    statement.bindString(10, channel.category)
-                    statement.bindString(11, channel.provider)
-                    statement.executeInsert()
-                }
-            } finally {
-                statement.close()
-            }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
-        }
+        replaceAll(sourceKey, batch.take(240))
     }
 
     fun replaceAll(sourceKey: String, channels: List<SportsChannel>) {
@@ -92,7 +55,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
                     "INSERT INTO preview(source_key,ord,id,name,grp,logo,url,tvg_name,tvg_id,category,provider) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
                 )
                 try {
-                    channels.forEachIndexed { index, channel ->
+                    channels.take(240).forEachIndexed { index, channel ->
                         statement.clearBindings()
                         statement.bindString(1, sourceKey)
                         statement.bindLong(2, index.toLong())
@@ -107,14 +70,22 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
                         statement.bindString(11, channel.provider)
                         statement.executeInsert()
                     }
-                } finally {
-                    statement.close()
-                }
+                } finally { statement.close() }
             }
             db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
-        }
+        } finally { db.endTransaction() }
+    }
+
+    /** Keep the best 240 startup channels as the provider stream is discovered. */
+    fun mergeRanked(sourceKey: String, candidates: List<SportsChannel>, limit: Int = 240) {
+        if (sourceKey.isBlank() || candidates.isEmpty()) return
+        val current = read(sourceKey, limit)
+        val merged = (current + candidates)
+            .filter { it.id.isNotBlank() && it.url.isNotBlank() }
+            .distinctBy { "${it.id}|${it.url}" }
+            .sortedWith(compareByDescending<SportsChannel> { SportsNetworkCatalog.startupPriority(it) }.thenBy { it.name.lowercase() })
+            .take(limit.coerceIn(32, 500))
+        replaceAll(sourceKey, merged)
     }
 
     fun append(sourceKey: String, startOrdinal: Int, channels: List<SportsChannel>) {
@@ -141,13 +112,9 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
                     statement.bindString(11, channel.provider)
                     statement.executeInsert()
                 }
-            } finally {
-                statement.close()
-            }
+            } finally { statement.close() }
             db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
-        }
+        } finally { db.endTransaction() }
     }
 
     fun read(sourceKey: String, limit: Int = 240): List<SportsChannel> {
@@ -159,11 +126,7 @@ class SportsStartupPreviewStore(context: Context) : SQLiteOpenHelper(
         ).use { cursor ->
             val out = ArrayList<SportsChannel>(safeLimit)
             while (cursor.moveToNext()) {
-                out += SportsChannel(
-                    cursor.getString(0), cursor.getString(1), cursor.getString(2),
-                    cursor.getString(3)?.ifBlank { null }, cursor.getString(4),
-                    cursor.getString(5), cursor.getString(6), cursor.getString(7), cursor.getString(8)
-                )
+                out += SportsChannel(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3)?.ifBlank { null }, cursor.getString(4), cursor.getString(5), cursor.getString(6), cursor.getString(7), cursor.getString(8))
             }
             out
         }
