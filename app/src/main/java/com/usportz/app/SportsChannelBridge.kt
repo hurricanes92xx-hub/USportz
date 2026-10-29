@@ -69,7 +69,7 @@ object SportsChannelBridge {
     fun pageSportsChannels(context: Context, query: String = "", offset: Int = 0, limit: Int = 80): List<SportsChannel> {
         val source = SourceStore(context)
         val server = normalizeXtreamServer(source.server)
-        val sourceKey = sha256("$server\\u0000${source.user}\\u0000${source.pass}\\u0000${source.playlist}")
+        val sourceKey = sha256("$server\u0000${source.user}\u0000${source.pass}\u0000${source.playlist}")
         val page = runCatching {
             SportsChannelIndexQuery.pageSportsChannels(context, sourceKey, query, offset, limit)
         }.getOrDefault(emptyList())
