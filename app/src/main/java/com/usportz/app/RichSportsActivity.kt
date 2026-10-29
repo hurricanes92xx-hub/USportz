@@ -1,6 +1,7 @@
 package com.usportz.app
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -133,6 +134,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Header(refreshing, onRefresh) }
         item { Hero(channels.size, live.size, soon.size, today.size, error) }
+        item { ExternalSportsDirectoryCard() }
         item { SportRail(selectedSport, onSport) }
         item { SectionTitle("LIVE NOW", "${live.size} events", LiveRed) }
         if (live.isEmpty()) item { EmptyCard("No live games detected", "The live schedule refreshes independently of your IPTV playlist.") }
@@ -150,6 +152,7 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 @Composable private fun SportsTab(visible: List<SportsEvent>, allEvents: List<SportsEvent>, channels: List<SportsChannel>, selectedSport: String, bucket: ScheduleBucket, now: Long, onSport: (String) -> Unit, onBucket: (ScheduleBucket) -> Unit, onRefresh: () -> Unit, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, favorites: MutableMap<String, Boolean>, openEvent: (SportsEvent) -> Unit) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("SPORTS", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("Tap any game to see every matched source", color = Color(0xFF9DA5B7), fontSize = 13.sp) }; IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh", tint = Orange) } } }
+        item { ExternalSportsDirectoryCard() }
         item { SportRail(selectedSport, onSport) }
         item { ScheduleRail(bucket, onBucket, SportsSchedule.forSport(allEvents, selectedSport), now) }
         item { SectionTitle(bucket.label, "${visible.size} events", if (bucket == ScheduleBucket.LIVE) LiveRed else Orange) }
@@ -227,6 +230,30 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 }
 
 @Composable private fun FavoritesTab(events: List<SportsEvent>, channels: List<SportsChannel>, favorites: MutableMap<String, Boolean>, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, openEvent: (SportsEvent) -> Unit) { val saved = events.filter { favorites[it.id] == true }; LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { item { Text("FAVORITES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black) }; if (saved.isEmpty()) item { EmptyCard("Nothing saved yet", "Star an event to keep it here.") } else items(saved, key = { "fav-${it.id}" }) { EventCard(it, it.state == "in", channels, System.currentTimeMillis(), play, playEvent, openEvent, favorites) } } }
+@Composable private fun ExternalSportsDirectoryCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Card(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp).clickable {
+            // This opens the external schedule in the system browser. We intentionally
+            // do not scrape undocumented endpoints or embed an unverified third-party player.
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://thetvapp.plus/v12"))
+            runCatching { context.startActivity(intent) }
+        },
+        colors = CardDefaults.cardColors(containerColor = Panel2),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.OpenInBrowser, contentDescription = null, tint = Cyan, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("EXTERNAL SPORTS SCHEDULE", color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                Text("Open TheTVApp.plus in your browser. Playback and source licensing are not verified by USportz.", color = Color(0xFFB8BECC), fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = "Open external schedule", tint = Orange)
+        }
+    }
+}
+
 @Composable private fun SourcesTab(open: () -> Unit) { Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text("SOURCES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("Xtream Codes + M3U/M3U8", color = Color.Gray); Card(Modifier.fillMaxWidth().clickable { open() }, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.SettingsInputAntenna, null, tint = Orange); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text("Manage source", color = Color.White, fontWeight = FontWeight.Bold); Text("Connect, test and index your playlist", color = Color.Gray, fontSize = 12.sp) }; Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } } } }
 @Composable private fun BottomBar(selected: Int, onSelect: (Int) -> Unit) { NavigationBar(containerColor = Color(0xFF11131D)) { listOf(Icons.Default.Home to "Home", Icons.Default.SportsScore to "Sports", Icons.Default.LiveTv to "Sports TV", Icons.Default.Star to "Favorites", Icons.Default.Settings to "Sources").forEachIndexed { i, item -> NavigationBarItem(selected = selected == i, onClick = { onSelect(i) }, icon = { Icon(item.first, item.second) }, label = { Text(item.second) }) } } }
 @Composable private fun Header(refreshing: Boolean, onRefresh: () -> Unit) { Row(Modifier.fillMaxWidth().background(Panel2).padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("USPORTZ", fontSize = 31.sp, fontWeight = FontWeight.Black, color = Color.White); Text("SPORTS COMMAND CENTER", fontSize = 11.sp, color = Orange2, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp) }; IconButton(onClick = onRefresh, enabled = !refreshing) { Icon(if (refreshing) Icons.Default.Sync else Icons.Default.Refresh, "Refresh", tint = if (refreshing) Color.Gray else Orange) } } }
