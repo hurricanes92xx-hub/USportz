@@ -57,7 +57,7 @@ Self-hosting assets are included under `deploy/ncaa-api/`.
 - In-memory `ChannelIndex` ranking now keeps a bounded top-K heap instead of sorting every match, while preserving the existing relevance score and deterministic tie order.
 - Unit tests cover exact-match ranking, bounded result counts and empty/unmatched searches.
 
-Performance should be compared on the same device and source before claiming a speedup. A useful check is cold-start time to first sports channel, full import duration, search latency for common team/network names, and memory use with a 50k+ channel test catalogue.
+The importer emits a credential-free `USPortzPerf` log line with success, channel count and elapsed milliseconds. Capture it with `adb logcat -s USPortzPerf:I`. Performance should be compared on the same device and source before claiming a speedup. A useful check is cold-start time to first sports channel, full import duration, search latency for common team/network names, and memory use with a 50k+ channel test catalogue.
 
 ## Security
 Xtream credentials remain device-side. Do not commit real credentials, playlists, provider URLs, or API secrets.
