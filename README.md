@@ -49,6 +49,16 @@ The app caches NCAA scoreboard responses for 45 seconds, caps imported games, us
 
 Self-hosting assets are included under `deploy/ncaa-api/`.
 
+## Large-catalogue performance
+- Channel imports remain streamed and batch-written; the active catalogue is swapped only after a complete generation is available.
+- SQLite now maintains an FTS4 index over channel names, groups and EPG/provider metadata. Existing databases are upgraded and their current catalogue is backfilled into the index.
+- Event-to-channel matching tries the dedicated North America sports fast lane, then full-text candidates, with the existing substring and broad sports fallback retained for compatibility.
+- Sports TV browsing requests bounded 40-channel pages from SQLite rather than requiring the UI to materialize the entire active sports catalogue. Search uses the full-text index with a substring fallback.
+- In-memory `ChannelIndex` ranking now keeps a bounded top-K heap instead of sorting every match, while preserving the existing relevance score and deterministic tie order.
+- Unit tests cover exact-match ranking, bounded result counts and empty/unmatched searches.
+
+Performance should be compared on the same device and source before claiming a speedup. A useful check is cold-start time to first sports channel, full import duration, search latency for common team/network names, and memory use with a 50k+ channel test catalogue.
+
 ## Security
 Xtream credentials remain device-side. Do not commit real credentials, playlists, provider URLs, or API secrets.
 
