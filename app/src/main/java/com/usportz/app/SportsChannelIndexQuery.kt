@@ -67,7 +67,7 @@ object SportsChannelIndexQuery {
             ?: return emptyList()
         db.use {
             val normalized = normalize(query)
-            val tokens = normalized.split(' ').filter { it.length >= 2 }.distinct().take(8)
+            val tokens = normalized.split(' ').filter { it.isNotBlank() }.distinct().take(8)
             val projection = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation AND m.complete=1"
             if (tokens.isEmpty()) {
                 val sql = "$projection WHERE c.source_key=? AND c.is_sports=1 ORDER BY c.name COLLATE NOCASE LIMIT $safeLimit OFFSET $safeOffset"
