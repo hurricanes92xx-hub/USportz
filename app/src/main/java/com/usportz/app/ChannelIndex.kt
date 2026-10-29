@@ -1,10 +1,12 @@
 package com.usportz.app
 
+import java.util.PriorityQueue
+
 /**
- * UI-safe channel view over very large Xtream/M3U inventories.
+ * UI-safe channel view over large Xtream/M3U inventories.
  *
- * Construction stays O(1): the full catalogue remains the source of truth and
- * expensive ranking is only performed when the user actually searches.
+ * Construction is O(1): the full catalogue remains the source of truth. Search keeps only
+ * the best bounded result set in memory instead of sorting every matching row.
  */
 class ChannelIndex<T>(
     items: List<T>,
@@ -12,6 +14,13 @@ class ChannelIndex<T>(
     private val group: (T) -> String
 ) {
     private val allItems: List<T> = items
+
+    private data class Ranked<T>(
+        val item: T,
+        val score: Int,
+        val normalizedName: String,
+        val order: Int
+    )
 
     fun isReady(): Boolean = true
 
@@ -47,17 +56,31 @@ class ChannelIndex<T>(
         if (q.isBlank()) return emptyList()
         val safeLimit = limit.coerceIn(1, 100)
 
-        // Search the complete catalogue. The old 5,000-row cap could make a
-        // valid sports channel invisible simply because it appeared later in a
-        // large provider playlist. Only the bounded result list reaches UI.
-        return allItems.asSequence()
-            .filter { sport == null || SportsCatalog.classify(name(it), group(it)).equals(sport, true) }
-            .map { it to score(it, q) }
-            .filter { it.second > 0 }
-            .sortedWith(compareByDescending<Pair<T, Int>> { it.second }.thenBy { normalize(name(it.first)) })
-            .take(safeLimit)
-            .map { it.first }
-            .toList()
+        val ranking = compareByDescending<Ranked<T>> { it.score }
+            .thenBy { it.normalizedName }
+            .thenBy { it.order }
+        // Reverse ranking makes the worst retained result the heap head.
+        val best = PriorityQueue<Ranked<T>>(safeLimit, ranking.reversed())
+
+        allItems.forEachIndexed { index, item ->
+            if (sport != null && !SportsCatalog.classify(name(item), group(item)).equals(sport, true)) {
+                return@forEachIndexed
+            }
+            val points = score(item, q)
+            if (points <= 0) return@forEachIndexed
+
+            val candidate = Ranked(item, points, normalize(name(item)), index)
+            if (best.size < safeLimit) {
+                best.add(candidate)
+            } else if (ranking.compare(candidate, best.peek()) < 0) {
+                best.poll()
+                best.add(candidate)
+            }
+        }
+
+        return best.toList()
+            .sortedWith(ranking)
+            .map { it.item }
     }
 
     private fun score(item: T, query: String): Int {

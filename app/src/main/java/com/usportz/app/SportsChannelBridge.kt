@@ -1,6 +1,8 @@
 package com.usportz.app
 
 import android.content.Context
+import android.os.SystemClock
+import android.util.Log
 import android.util.JsonReader
 import android.util.JsonToken
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +65,23 @@ object SportsChannelBridge {
             SportsBroadcasts.preferredNetworks(event).forEach { add(it) }
         }.map { it.trim() }.filter { it.length >= 3 }.distinct().take(18)
         return SportsChannelIndexQuery.eventCandidates(context, sourceKey, terms, limit)
+    }
+
+    /** Load a bounded sports-channel page directly from SQLite instead of materializing the full catalogue. */
+    fun pageSportsChannels(context: Context, query: String = "", offset: Int = 0, limit: Int = 80): List<SportsChannel> {
+        val source = SourceStore(context)
+        val server = normalizeXtreamServer(source.server)
+        val sourceKey = sha256("$server\u0000${source.user}\u0000${source.pass}\u0000${source.playlist}")
+        val page = runCatching {
+            SportsChannelIndexQuery.pageSportsChannels(context, sourceKey, query, offset, limit)
+        }.getOrDefault(emptyList())
+        if (page.isNotEmpty() || offset > 0 || query.isNotBlank()) return page
+        val fallback = cached.takeIf { cachedSourceKey == sourceKey }.orEmpty()
+        val filtered = if (query.isBlank()) fallback else fallback.filter {
+            listOf(it.name, it.group, it.tvgName, it.tvgId, it.category, it.provider)
+                .any { field -> field.contains(query, ignoreCase = true) }
+        }
+        return filtered.drop(offset.coerceAtLeast(0)).take(limit.coerceIn(1, 200))
     }
 
     fun authenticateXtream(server: String, user: String, pass: String): String? {
@@ -130,6 +149,9 @@ object SportsChannelBridge {
 
     private suspend fun refreshInternal(context: Context, server: String, user: String, pass: String, playlist: String, sourceKey: String) = withContext(Dispatchers.IO) {
         if (!indexing.compareAndSet(false, true)) return@withContext
+        val startedAt = SystemClock.elapsedRealtime()
+        var importedForMetrics = 0
+        var completedForMetrics = false
         try {
             val store = SportsChannelDiskStore(context)
             val generation = store.beginGeneration(sourceKey)
@@ -183,7 +205,9 @@ object SportsChannelBridge {
                 completedResponse = runCatching { fetchM3uStreaming(playlist, ::accept) > 0 }.getOrDefault(false)
             }
             val count = imported.get()
-            if (completedResponse && count > 0) {
+            importedForMetrics = count
+            completedForMetrics = completedResponse && count > 0
+            if (completedForMetrics) {
                 synchronized(pending) { flush(store, sourceKey, generation) }
                 store.updateRefreshProgress(sourceKey, generation, count)
                 store.activate(sourceKey, generation, count)
@@ -195,7 +219,11 @@ object SportsChannelBridge {
                     cachedGeneration = generation
                 }
             }
-        } finally { synchronized(pending) { pending.clear() }; indexing.set(false) }
+        } finally {
+            synchronized(pending) { pending.clear() }
+            indexing.set(false)
+            Log.i("USPortzPerf", "catalog_refresh success=$completedForMetrics channels=$importedForMetrics elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}")
+        }
     }
 
     private val pending = ArrayList<SportsChannel>(BATCH_SIZE)
