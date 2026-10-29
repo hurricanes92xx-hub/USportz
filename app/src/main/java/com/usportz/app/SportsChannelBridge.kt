@@ -65,6 +65,23 @@ object SportsChannelBridge {
         return SportsChannelIndexQuery.eventCandidates(context, sourceKey, terms, limit)
     }
 
+    /** Load a bounded sports-channel page directly from SQLite instead of materializing the full catalogue. */
+    fun pageSportsChannels(context: Context, query: String = "", offset: Int = 0, limit: Int = 80): List<SportsChannel> {
+        val source = SourceStore(context)
+        val server = normalizeXtreamServer(source.server)
+        val sourceKey = sha256("$server\\u0000${source.user}\\u0000${source.pass}\\u0000${source.playlist}")
+        val page = runCatching {
+            SportsChannelIndexQuery.pageSportsChannels(context, sourceKey, query, offset, limit)
+        }.getOrDefault(emptyList())
+        if (page.isNotEmpty() || offset > 0 || query.isNotBlank()) return page
+        val fallback = cached.takeIf { cachedSourceKey == sourceKey }.orEmpty()
+        val filtered = if (query.isBlank()) fallback else fallback.filter {
+            listOf(it.name, it.group, it.tvgName, it.tvgId, it.category, it.provider)
+                .any { field -> field.contains(query, ignoreCase = true) }
+        }
+        return filtered.drop(offset.coerceAtLeast(0)).take(limit.coerceIn(1, 200))
+    }
+
     fun authenticateXtream(server: String, user: String, pass: String): String? {
         val query = credentialsQuery(user, pass)
         for (base in normalizedServerCandidates(server)) {
