@@ -54,3 +54,9 @@ Xtream credentials remain device-side. Do not commit real credentials, playlists
 
 ## Build
 Open in Android Studio with a current Android SDK and run the `app` configuration. GitHub Actions builds the debug APK on pushes and pull requests targeting `main`.
+
+## TheTVApp.plus evaluation / integration boundary
+- The existing app already has a native sports-event pipeline, ESPN/NCAA/MLB/NHL schedule providers, Xtream/M3U channel ingestion, event-to-channel matching, cached schedule metadata, favorites, and Media3 playback. Keep these as the primary app experience.
+- TheTVApp.plus was inspected as an external schedule/event directory. Sample event pages linked to event-specific iframe destinations on a separate host, but the actual player implementation, direct media URLs, licensing, and source reliability were not verified.
+- The app includes an optional external-schedule card that opens `https://thetvapp.plus/v12` in the device browser. This does not scrape undocumented endpoints, embed an unverified player, or claim that its streams are licensed.
+- Do not replace the existing sports-data providers or Xtream/M3U playback path with TheTVApp.plus. Consider deeper integration only if a documented API and permission to use its schedule/media are established.
