@@ -1,6 +1,8 @@
 package com.usportz.app
 
 import android.content.Context
+import android.os.SystemClock
+import android.util.Log
 import android.util.JsonReader
 import android.util.JsonToken
 import kotlinx.coroutines.CoroutineScope
@@ -147,6 +149,9 @@ object SportsChannelBridge {
 
     private suspend fun refreshInternal(context: Context, server: String, user: String, pass: String, playlist: String, sourceKey: String) = withContext(Dispatchers.IO) {
         if (!indexing.compareAndSet(false, true)) return@withContext
+        val startedAt = SystemClock.elapsedRealtime()
+        var importedForMetrics = 0
+        var completedForMetrics = false
         try {
             val store = SportsChannelDiskStore(context)
             val generation = store.beginGeneration(sourceKey)
@@ -200,7 +205,9 @@ object SportsChannelBridge {
                 completedResponse = runCatching { fetchM3uStreaming(playlist, ::accept) > 0 }.getOrDefault(false)
             }
             val count = imported.get()
-            if (completedResponse && count > 0) {
+            importedForMetrics = count
+            completedForMetrics = completedResponse && count > 0
+            if (completedForMetrics) {
                 synchronized(pending) { flush(store, sourceKey, generation) }
                 store.updateRefreshProgress(sourceKey, generation, count)
                 store.activate(sourceKey, generation, count)
@@ -212,7 +219,11 @@ object SportsChannelBridge {
                     cachedGeneration = generation
                 }
             }
-        } finally { synchronized(pending) { pending.clear() }; indexing.set(false) }
+        } finally {
+            synchronized(pending) { pending.clear() }
+            indexing.set(false)
+            Log.i("USPortzPerf", "catalog_refresh success=$completedForMetrics channels=$importedForMetrics elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}")
+        }
     }
 
     private val pending = ArrayList<SportsChannel>(BATCH_SIZE)
