@@ -24,6 +24,18 @@ object SportsChannelIndexQuery {
             val safeTerms = terms.map(::normalize).filter { it.length >= 3 }.distinct().take(12)
             val base = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels c JOIN meta m ON m.source_key=c.source_key AND m.active_generation=c.generation AND m.complete=1 WHERE c.source_key=?"
             if (safeTerms.isNotEmpty()) {
+                // FTS narrows the search first; the LIKE path below remains a compatibility
+                // fallback for unusual punctuation, abbreviations, and partial substrings.
+                val ftsExpression = safeTerms.joinToString(" OR ") { term ->
+                    "\"" + term.replace("\"", "\"\"") + "\""
+                }
+                runCatching {
+                    val remaining = max - out.size
+                    if (remaining > 0) {
+                        val sql = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels_fts f JOIN meta m ON m.source_key=f.source_key AND m.active_generation=CAST(f.generation AS INTEGER) AND m.complete=1 JOIN channels c ON c.source_key=f.source_key AND c.generation=CAST(f.generation AS INTEGER) AND c.id=f.id WHERE f.source_key=? AND channels_fts MATCH ? ORDER BY c.is_sports DESC,c.name COLLATE NOCASE LIMIT $remaining"
+                        db.rawQuery(sql, arrayOf(sourceKey, ftsExpression)).use { c -> while (c.moveToNext()) add(c, out, seen) }
+                    }
+                }
                 val clauses = safeTerms.joinToString(" OR ") { "(LOWER(c.name) LIKE ? OR LOWER(c.tvg_name) LIKE ? OR LOWER(c.tvg_id) LIKE ? OR LOWER(c.grp) LIKE ? OR LOWER(c.category) LIKE ? OR LOWER(c.provider) LIKE ?)" }
                 val args = ArrayList<String>(1 + safeTerms.size * 6)
                 args += sourceKey
