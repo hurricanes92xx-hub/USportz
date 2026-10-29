@@ -32,7 +32,7 @@ object SportsChannelIndexQuery {
                 runCatching {
                     val remaining = max - out.size
                     if (remaining > 0) {
-                        val sql = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels_fts f JOIN meta m ON m.source_key=f.source_key AND m.active_generation=CAST(f.generation AS INTEGER) AND m.complete=1 JOIN channels c ON c.source_key=f.source_key AND c.generation=CAST(f.generation AS INTEGER) AND c.id=f.id WHERE f.source_key=? AND channels_fts MATCH ? ORDER BY c.is_sports DESC,c.name COLLATE NOCASE LIMIT $remaining"
+                        val sql = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels_fts JOIN meta m ON m.source_key=channels_fts.source_key AND m.active_generation=CAST(channels_fts.generation AS INTEGER) AND m.complete=1 JOIN channels c ON c.source_key=channels_fts.source_key AND c.generation=CAST(channels_fts.generation AS INTEGER) AND c.id=channels_fts.id WHERE channels_fts.source_key=? AND channels_fts MATCH ? ORDER BY c.is_sports DESC,c.name COLLATE NOCASE LIMIT $remaining"
                         db.rawQuery(sql, arrayOf(sourceKey, ftsExpression)).use { c -> while (c.moveToNext()) add(c, out, seen) }
                     }
                 }
@@ -77,7 +77,7 @@ object SportsChannelIndexQuery {
             }
 
             val ftsExpression = tokens.joinToString(" AND ") { "$it*" }
-            val ftsSql = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels_fts f JOIN meta m ON m.source_key=f.source_key AND m.active_generation=CAST(f.generation AS INTEGER) AND m.complete=1 JOIN channels c ON c.source_key=f.source_key AND c.generation=CAST(f.generation AS INTEGER) AND c.id=f.id WHERE f.source_key=? AND c.is_sports=1 AND channels_fts MATCH ? ORDER BY c.name COLLATE NOCASE LIMIT $safeLimit OFFSET $safeOffset"
+            val ftsSql = "SELECT c.id,c.name,c.grp,c.logo,c.url,c.tvg_name,c.tvg_id,c.category,c.provider FROM channels_fts JOIN meta m ON m.source_key=channels_fts.source_key AND m.active_generation=CAST(channels_fts.generation AS INTEGER) AND m.complete=1 JOIN channels c ON c.source_key=channels_fts.source_key AND c.generation=CAST(channels_fts.generation AS INTEGER) AND c.id=channels_fts.id WHERE channels_fts.source_key=? AND c.is_sports=1 AND channels_fts MATCH ? ORDER BY c.name COLLATE NOCASE LIMIT $safeLimit OFFSET $safeOffset"
             val indexed = runCatching {
                 db.rawQuery(ftsSql, arrayOf(sourceKey, ftsExpression)).use { cursor ->
                     buildList { while (cursor.moveToNext()) addChannel(cursor) }
