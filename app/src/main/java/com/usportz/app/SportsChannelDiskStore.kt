@@ -19,7 +19,7 @@ class SportsChannelDiskStore(context: Context) : SQLiteOpenHelper(context.applic
         db.execSQL("CREATE TABLE channels (generation INTEGER NOT NULL, source_key TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, grp TEXT NOT NULL, logo TEXT, url TEXT NOT NULL, tvg_name TEXT NOT NULL DEFAULT '', tvg_id TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', is_sports INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(generation, id))")
         db.execSQL("CREATE INDEX idx_channels_active_sports ON channels(source_key, generation, is_sports, name)")
         db.execSQL("CREATE INDEX idx_channels_active_name ON channels(source_key, generation, name COLLATE NOCASE)")
-        db.execSQL("CREATE VIRTUAL TABLE channels_fts USING fts4(source_key, generation, id, name, grp, tvg_name, tvg_id, category, provider, tokenize=unicode61)")
+        db.execSQL("CREATE VIRTUAL TABLE channels_fts USING fts4(source_key, generation, id, name, grp, tvg_name, tvg_id, category, provider, tokenize=unicode61, notindexed=source_key, notindexed=generation, notindexed=id)")
         db.execSQL("CREATE TABLE meta (source_key TEXT PRIMARY KEY, active_generation INTEGER NOT NULL, saved_at INTEGER NOT NULL, channel_count INTEGER NOT NULL, complete INTEGER NOT NULL DEFAULT 1)")
         db.execSQL("CREATE TABLE refresh_state (source_key TEXT PRIMARY KEY, generation INTEGER NOT NULL, imported_count INTEGER NOT NULL, expected_count INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)")
     }
