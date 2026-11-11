@@ -193,9 +193,42 @@ private enum class UTab(val label: String) { HOME("Home"), SPORTS("Sports"), CHA
         }
     }
 }
-@Composable private fun USportRail(selected:String,on:(String)->Unit){LazyRow(contentPadding=PaddingValues(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){items(SportsCatalog.categories){s->FilterChip(selected==s,{on(s)},{Text(s)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=UBlue,selectedLabelColor=Color.Black))}}}
-@Composable private fun USportTiles(selected:String,on:(String)->Unit){LazyRow(contentPadding=PaddingValues(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){items(SportsCatalog.categories.take(12)){s->Card(Modifier.width(112.dp).height(82.dp).clickable{on(s)},shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Column(Modifier.fillMaxSize().padding(12.dp),verticalArrangement=Arrangement.SpaceBetween){Icon(Icons.Default.SportsScore,null,tint=UBlue);Text(s,color=Color.White,fontWeight=FontWeight.Bold,fontSize=12.sp,maxLines=1)}}}}}
-@Composable private fun UChannelRail(channels:List<SportsChannel>,play:(SportsChannel)->Unit){LazyRow(contentPadding=PaddingValues(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){items(channels.filter{SportsNetworkCatalog.sportsChannels(listOf(it)).isNotEmpty()}.take(18),key={"rail-${it.id}-${it.url}"}){c->Card(Modifier.width(180.dp).clickable{play(c)},shape=RoundedCornerShape(14.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Column(Modifier.padding(13.dp)){Icon(Icons.Default.LiveTv,null,tint=UBlue);Text(c.name,color=Color.White,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=8.dp));Text("WATCH CHANNEL  ›",color=UBlue,fontSize=9.sp,fontWeight=FontWeight.Bold)}}}}}
+@Composable private fun USportRail(selected: String, on: (String) -> Unit) {
+    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(SportsCatalog.categories) { category ->
+            FilterChip(selected == category, { on(category) }, { Text(category) },
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = UBlue, selectedLabelColor = Color.Black))
+        }
+    }
+}
+@Composable private fun USportTiles(selected: String, on: (String) -> Unit) {
+    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(SportsCatalog.categories.take(12)) { category ->
+            Card(Modifier.width(112.dp).height(82.dp).clickable { on(category) }, shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = USurface)) {
+                Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                    Icon(Icons.Default.SportsScore, null, tint = UBlue)
+                    Text(category, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+@Composable private fun UChannelRail(channels: List<SportsChannel>, play: (SportsChannel) -> Unit) {
+    val sportChannels = remember(channels) { SportsNetworkCatalog.sportsChannels(channels).map { it.first }.take(18) }
+    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(sportChannels, key = { "rail-${it.id}-${it.url}" }) { channel ->
+            Card(Modifier.width(180.dp).clickable { play(channel) }, shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = USurface)) {
+                Column(Modifier.padding(13.dp)) {
+                    Icon(Icons.Default.LiveTv, null, tint = UBlue)
+                    Text(channel.name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+                    Text("WATCH CHANNEL  ›", color = UBlue, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
 @Composable private fun UChannelRow(c:SportsChannel,play:(SportsChannel)->Unit){Card(Modifier.fillMaxWidth().padding(horizontal=16.dp).clickable{play(c)},shape=RoundedCornerShape(14.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.LiveTv,null,tint=UBlue);Column(Modifier.weight(1f).padding(start=12.dp)){Text(c.name,color=Color.White,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis);Text("SPORTS CHANNEL",color=Color.Gray,fontSize=9.sp)};Icon(Icons.Default.PlayArrow,null,tint=UBlue)}}}
 @Composable private fun USourcePanel(open:()->Unit){Card(Modifier.fillMaxWidth().padding(18.dp),shape=RoundedCornerShape(22.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Column(Modifier.padding(22.dp)){Icon(Icons.Default.SettingsInputAntenna,null,tint=UBlue);Text("Your streaming sources",color=Color.White,fontSize=22.sp,fontWeight=FontWeight.Black,modifier=Modifier.padding(top=10.dp));Text("Connect Xtream Codes or an M3U playlist. Your provider credentials stay on this device.",color=Color.Gray,modifier=Modifier.padding(top=8.dp));Button(onClick=open,Modifier.fillMaxWidth().padding(top=16.dp),shape=RoundedCornerShape(12.dp)){Text("MANAGE SOURCES")}}}}
 @Composable private fun UEmpty(title:String,detail:String){Card(Modifier.fillMaxWidth().padding(horizontal=16.dp),shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Column(Modifier.padding(18.dp)){Text(title,color=Color.White,fontWeight=FontWeight.Bold);Text(detail,color=Color.Gray,fontSize=12.sp,modifier=Modifier.padding(top=5.dp))}}}
