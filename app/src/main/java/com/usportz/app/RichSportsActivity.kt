@@ -4,10 +4,8 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -19,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -30,341 +29,178 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
-import java.time.OffsetDateTime
 import java.time.ZoneId
 
+/** Premium sports-first mobile dashboard. TV users have their own D-pad-first activity. */
 class RichSportsActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { RichSportsApp() } }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { PremiumSportsApp() } }
     fun openSourceApp() = startActivity(Intent(this, SourceActivity::class.java))
     fun playChannel(channel: SportsChannel) = startActivity(Intent(this, RichPlayerActivity::class.java).putExtra(RichPlayerActivity.EXTRA_URL, channel.url))
     fun playEvent(event: SportsEvent) { if (isMonsterJamEvent(event)) openMonsterJamYouTube(this) }
 }
 
-private val Ink = Color(0xFF080A12)
-private val Panel = Color(0xFF121522)
-private val Panel2 = Color(0xFF181B2A)
-private val Orange = Color(0xFFFF6A00)
-private val Orange2 = Color(0xFFFF9A3D)
-private val Cyan = Color(0xFF14D9FF)
-private val LiveRed = Color(0xFFFF335C)
+private val UBg = Color(0xFF070B12)
+private val USurface = Color(0xFF101925)
+private val USurface2 = Color(0xFF172333)
+private val ULine = Color(0xFF26384A)
+private val UBlue = Color(0xFF35D6FF)
+private val ULive = Color(0xFFFF405B)
+private val UAmber = Color(0xFFFFB547)
 
-enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("STARTING SOON"), TODAY("TODAY"), TOMORROW("TOMORROW"), NEXT_3_DAYS("NEXT 3 DAYS"), COMPLETED("COMPLETED") }
+private enum class UTab(val label: String) { HOME("Home"), SPORTS("Sports"), CHANNELS("Sports TV"), SAVED("My Stuff"), SOURCES("Sources") }
 
-@Composable private fun RichSportsApp() {
+@Composable private fun PremiumSportsApp() {
     val activity = androidx.compose.ui.platform.LocalContext.current as RichSportsActivity
+    val prefs = remember { activity.getSharedPreferences("usportz_ui", 0) }
+    val saved = remember { mutableStateMapOf<String, Boolean>().apply { prefs.all.filterValues { it == true }.keys.forEach { put(it, true) } } }
     var events by remember { mutableStateOf(emptyList<SportsEvent>()) }
     var channels by remember { mutableStateOf(emptyList<SportsChannel>()) }
-    var selectedSport by remember { mutableStateOf("All") }
-    var bucket by remember { mutableStateOf(ScheduleBucket.LIVE) }
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableStateOf(UTab.HOME) }
+    var sport by remember { mutableStateOf("All") }
+    var search by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var refresh by remember { mutableIntStateOf(0) }
-    var selectedEvent by remember { mutableStateOf<SportsEvent?>(null) }
-    val favorites = remember { mutableStateMapOf<String, Boolean>() }
+    var refreshToken by remember { mutableIntStateOf(0) }
+    var chosen by remember { mutableStateOf<SportsEvent?>(null) }
 
     suspend fun reload(force: Boolean) {
-        if (force) refreshing = true else loading = true
-        error = ""
+        refreshing = force; loading = events.isEmpty(); error = ""
         try {
-            val (loadedChannels, loadedEvents) = coroutineScope {
+            val pair = coroutineScope {
                 val c = async(Dispatchers.IO) { SportsChannelBridge.load(activity, force) }
-                // Only force the schedule when the user explicitly refreshes. The normal
-                // 30-second loop uses its 2-minute cache and background enrichment instead
-                // of hammering 20+ schedule endpoints every tick.
                 val e = async(Dispatchers.IO) { (SportsSchedule.load(force) + MonsterJamSchedule.load()).distinctBy { it.id } }
                 c.await() to e.await()
             }
-            channels = loadedChannels
-            events = loadedEvents
-            if (loadedEvents.isNotEmpty()) withContext(Dispatchers.IO) { SportsScheduleDiskCache.write(activity, loadedEvents) }
-        } catch (t: Throwable) {
-            error = t.message?.takeIf { it.isNotBlank() } ?: "Unable to refresh sports data"
-        } finally { loading = false; refreshing = false; now = System.currentTimeMillis() }
+            channels = pair.first; events = pair.second
+            if (events.isNotEmpty()) withContext(Dispatchers.IO) { SportsScheduleDiskCache.write(activity, events) }
+        } catch (t: Throwable) { error = t.message?.take(160) ?: "Sports data is temporarily unavailable" }
+        finally { loading = false; refreshing = false; now = System.currentTimeMillis() }
     }
-
     LaunchedEffect(Unit) {
-        val saved = withContext(Dispatchers.IO) { SportsScheduleDiskCache.read(activity) }
-        if (saved.isNotEmpty()) { events = saved; loading = false; now = System.currentTimeMillis() }
+        val cached = withContext(Dispatchers.IO) { SportsScheduleDiskCache.read(activity) }
+        if (cached.isNotEmpty()) { events = cached; loading = false }
         reload(false)
-        // Adopt the isolated sports preview as soon as it is written. Without this short
-        // handoff the screen could remain at zero channels until the 30-second refresh loop.
-        for (attempt in 0 until 45) {
-            if (channels.isNotEmpty()) break
-            delay(750)
-            val startupSnapshot = withContext(Dispatchers.IO) { SportsChannelBridge.load(activity, false) }
-            if (startupSnapshot.isNotEmpty()) channels = startupSnapshot
-        }
-        while (true) { delay(30_000); reload(false) }
+        while (true) { delay(45_000); reload(false) }
     }
-    LaunchedEffect(refresh) { if (refresh > 0) reload(true) }
+    LaunchedEffect(refreshToken) { if (refreshToken > 0) reload(true) }
 
-    val visibleEvents = remember(events, selectedSport, bucket, now) {
-        SportsSchedule.forSport(events, selectedSport)
-            .filter { scheduleBucket(it, now) == bucket }
-            .sortedBy { eventEpoch(it.startTime) ?: Long.MAX_VALUE }
+    val filtered = remember(events, sport, search) {
+        SportsSchedule.forSport(events, sport).filter { search.isBlank() || listOf(it.name,it.league,it.detail,it.competitors.joinToString()).any { s -> s.contains(search, true) } }
     }
+    val live = filtered.filter { it.state == "in" || (epoch(it.startTime)?.let { t -> t <= now && now-t < 6*3600000L } == true && it.state != "post") }
+    val upcoming = filtered.filter { it.state != "in" && (epoch(it.startTime) ?: 0L) > now }.sortedBy { epoch(it.startTime) ?: Long.MAX_VALUE }
+    val today = upcoming.filter { epoch(it.startTime)?.let { t -> Instant.ofEpochMilli(t).atZone(ZoneId.systemDefault()).toLocalDate() == Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate() } == true }
 
-    MaterialTheme(colorScheme = darkColorScheme(primary = Orange, secondary = Cyan, background = Ink, surface = Panel)) {
-        Scaffold(containerColor = Ink, bottomBar = { BottomBar(tab) { tab = it } }) { pad ->
-            Box(Modifier.fillMaxSize().padding(pad)) {
-                when (tab) {
-                    0 -> HomeTab(events, channels, selectedSport, now, loading, refreshing, error, { selectedSport = it }, { refresh++ }, activity::playChannel, activity::playEvent) { selectedEvent = it }
-                    1 -> SportsTab(visibleEvents, events, channels, selectedSport, bucket, now, { selectedSport = it }, { bucket = it }, { refresh++ }, activity::playChannel, activity::playEvent, favorites) { selectedEvent = it }
-                    2 -> SportsNewsTab(channels, loading, SportsChannelBridge.isIndexing() || FastXtreamSportsBootstrap.isRunning(), activity::playChannel)
-                    3 -> FavoritesTab(events, channels, favorites, activity::playChannel, activity::playEvent) { selectedEvent = it }
-                    4 -> SourcesTab { activity.openSourceApp() }
-                }
+    MaterialTheme(colorScheme = darkColorScheme(primary=UBlue, secondary=UAmber, background=UBg, surface=USurface)) {
+        Scaffold(containerColor=UBg, bottomBar={
+            NavigationBar(containerColor=Color(0xFF0B111A), tonalElevation=0.dp) {
+                UTab.values().forEach { t -> NavigationBarItem(selected=tab==t,onClick={tab=t;search=""},icon={Icon(when(t){UTab.HOME->Icons.Default.Home;UTab.SPORTS->Icons.Default.SportsScore;UTab.CHANNELS->Icons.Default.LiveTv;UTab.SAVED->Icons.Default.Bookmark;UTab.SOURCES->Icons.Default.SettingsInputAntenna},null)},label={Text(t.label,fontSize=10.sp)},colors=NavigationBarItemDefaults.colors(selectedIconColor=UBlue,selectedTextColor=UBlue,indicatorColor=USurface2)) }
             }
-        }
-        selectedEvent?.let { event -> EventSourcesDialog(event, channels, activity::playChannel) { selectedEvent = null } }
-    }
-}
-
-@Composable private fun HomeTab(events: List<SportsEvent>, channels: List<SportsChannel>, selectedSport: String, now: Long, loading: Boolean, refreshing: Boolean, error: String, onSport: (String) -> Unit, onRefresh: () -> Unit, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, openEvent: (SportsEvent) -> Unit) {
-    val filtered = SportsSchedule.forSport(events, selectedSport)
-    val live = filtered.filter { scheduleBucket(it, now) == ScheduleBucket.LIVE }
-    val soon = filtered.filter { scheduleBucket(it, now) == ScheduleBucket.STARTING_SOON }
-    val today = filtered.filter { scheduleBucket(it, now) == ScheduleBucket.TODAY }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Header(refreshing, onRefresh) }
-        item { Hero(channels.size, live.size, soon.size, today.size, error) }
-        item { SportRail(selectedSport, onSport) }
-        item { SectionTitle("LIVE NOW", "${live.size} events", LiveRed) }
-        if (live.isEmpty()) item { EmptyCard("No live games detected", "The live schedule refreshes independently of your IPTV playlist.") }
-        else items(live.take(20), key = { "live-${it.id}" }) { EventCard(it, true, channels, now, play, playEvent, openEvent) }
-        item { SectionTitle("STARTING SOON", "${soon.size} events", Cyan) }
-        if (soon.isEmpty()) item { EmptyCard("No events starting soon", "Events within the next six hours appear here.") }
-        else items(soon.take(20), key = { "soon-${it.id}" }) { EventCard(it, false, channels, now, play, playEvent, openEvent) }
-        item { SectionTitle("TODAY", "${today.size} events", Orange) }
-        if (today.isEmpty()) item { EmptyCard("No more events today", "Try another sport or check TOMORROW.") }
-        else items(today.take(30), key = { "today-${it.id}" }) { EventCard(it, false, channels, now, play, playEvent, openEvent) }
-        if (loading) item { Text("Loading live schedule…", color = Color.Gray, modifier = Modifier.padding(18.dp)) }
-    }
-}
-
-@Composable private fun SportsTab(visible: List<SportsEvent>, allEvents: List<SportsEvent>, channels: List<SportsChannel>, selectedSport: String, bucket: ScheduleBucket, now: Long, onSport: (String) -> Unit, onBucket: (ScheduleBucket) -> Unit, onRefresh: () -> Unit, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, favorites: MutableMap<String, Boolean>, openEvent: (SportsEvent) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("SPORTS", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("Tap any game to see every matched source", color = Color(0xFF9DA5B7), fontSize = 13.sp) }; IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh", tint = Orange) } } }
-        item { SportRail(selectedSport, onSport) }
-        item { ScheduleRail(bucket, onBucket, SportsSchedule.forSport(allEvents, selectedSport), now) }
-        item { SectionTitle(bucket.label, "${visible.size} events", if (bucket == ScheduleBucket.LIVE) LiveRed else Orange) }
-        if (visible.isEmpty()) item { EmptyCard(emptyTitle(bucket), emptySubtitle(bucket)) }
-        else items(visible.take(60), key = { "schedule-${bucket.name}-${it.id}" }) { EventCard(it, bucket == ScheduleBucket.LIVE, channels, now, play, playEvent, openEvent, favorites) }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable private fun EventCard(event: SportsEvent, live: Boolean, channels: List<SportsChannel>, now: Long, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, openEvent: (SportsEvent) -> Unit, favorites: MutableMap<String, Boolean>? = null) {
-    val ranked by produceState<List<SportsResolver.WatchSource>>(emptyList(), event.id, channels) {
-        value = withContext(Dispatchers.Default) { SportsResolver.resolve(event, channels, 16) }
-    }
-    val brand = SportsBranding.find(event.name, event.league)
-    val leagueLogo = event.leagueLogo?.takeIf { it.isNotBlank() } ?: BrandAssets.logoUrl(brand)
-    val start = eventEpoch(event.startTime)
-    val countdown = if (start != null && start > now) formatCountdown(start - now) else ""
-    val isFavorite = favorites?.get(event.id) == true
-    val monsterJam = isMonsterJamEvent(event)
-    Card(
-        Modifier.fillMaxWidth().combinedClickable(
-            onClick = { if (ranked.isNotEmpty()) play(ranked.first().channel) else openEvent(event) },
-            onLongClick = { openEvent(event) }
-        ),
-        colors = CardDefaults.cardColors(containerColor = Panel),
-        shape = RoundedCornerShape(18.dp)
-    ) {
-        Column(Modifier.padding(15.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (live) { Box(Modifier.size(9.dp).background(LiveRed, RoundedCornerShape(50))); Spacer(Modifier.width(7.dp)); Text("LIVE NOW", color = LiveRed, fontSize = 10.sp, fontWeight = FontWeight.Black) }
-                else Text("UPCOMING", color = Orange, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                Spacer(Modifier.width(9.dp)); Text(brand?.label ?: event.league, color = Color.Gray, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.weight(1f)); if (!live && countdown.isNotBlank()) Text("IN $countdown", color = Orange, fontSize = 10.sp, fontWeight = FontWeight.Black)
-            }
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!leagueLogo.isNullOrBlank()) AsyncImage(leagueLogo, brand?.label ?: event.league, Modifier.size(44.dp), contentScale = ContentScale.Fit)
-                Column(Modifier.weight(1f).padding(start = 10.dp)) { Text(SportsPresentation.matchup(event), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(event.detail.ifBlank { formatClock(event.startTime) }, color = Color(0xFF9DA5B7), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
-                if (favorites != null) IconButton(onClick = { favorites[event.id] = !isFavorite }) { Icon(if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite", tint = if (isFavorite) Orange else Color.Gray) }
-            }
-            if (event.competitorLogos.any { it.isNotBlank() }) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) { event.competitorLogos.take(2).forEachIndexed { i, logo -> if (logo.isNotBlank()) AsyncImage(logo, event.competitors.getOrNull(i).orEmpty(), Modifier.size(32.dp), contentScale = ContentScale.Fit) }; Text(event.competitors.take(2).joinToString("  •  "), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (ranked.isEmpty()) "MATCHING SOURCES…" else "${ranked.size} AVAILABLE SOURCES", color = if (ranked.isEmpty()) Color.Gray else Orange, fontSize = 10.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
-                Text(if (ranked.isEmpty()) "TAP FOR SOURCES" else "TAP TO WATCH • HOLD FOR SOURCES", color = Color(0xFF9DA5B7), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.width(5.dp)); Icon(Icons.Default.ChevronRight, null, tint = Orange)
-            }
-            if (monsterJam) OutlinedButton(onClick = { playEvent(event) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("WATCH OFFICIAL MONSTER JAM STREAM", color = Orange, fontWeight = FontWeight.Black) }
-            if (ranked.isNotEmpty()) { val best = ranked.first(); Text("BEST: ${best.channel.name} • ${best.score}%", color = Color(0xFFB8BECC), fontSize = 10.sp, modifier = Modifier.padding(top = 5.dp), maxLines = 1, overflow = TextOverflow.Ellipsis) }
-        }
-    }
-}
-
-@Composable private fun EventSourcesDialog(event: SportsEvent, channels: List<SportsChannel>, play: (SportsChannel) -> Unit, close: () -> Unit) {
-    val ranked by produceState<List<SportsResolver.WatchSource>>(emptyList(), event.id, channels) {
-        value = withContext(Dispatchers.Default) { SportsResolver.resolve(event, channels, 16) }
-    }
-    AlertDialog(onDismissRequest = close, containerColor = Panel2, title = { Column { Text(SportsPresentation.matchup(event), color = Color.White, fontWeight = FontWeight.Black); Text("${ranked.size} matched IPTV sources", color = Orange2, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) } }, text = {
-        if (ranked.isEmpty()) Column { Text("GAME FOUND — NO CHANNEL MATCH", color = Orange2, fontWeight = FontWeight.Black); Text("No strong provider match was found yet. Try refreshing the sports source.", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
-        else LazyColumn(Modifier.heightIn(max = 430.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { items(ranked, key = { "source-${it.channel.url}-${it.channel.name}" }) { match ->
-            OutlinedButton(onClick = { close(); play(match.channel) }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)) {
-                Icon(Icons.Default.PlayArrow, null, tint = Orange); Spacer(Modifier.width(6.dp)); Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) { Text("${match.score}% MATCH", color = if (match.score >= 90) Orange else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black); Text(match.channel.name, color = Color(0xFFB8BECC), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(match.reasons.take(2).joinToString(" • "), color = Color.Gray, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }; Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
-            }
-        } }
-    }, confirmButton = { TextButton(onClick = close) { Text("CLOSE", color = Orange) } })
-}
-
-@Composable private fun SportsNewsTab(channels: List<SportsChannel>, loading: Boolean, indexing: Boolean, play: (SportsChannel) -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var pageChannels by remember(channels) { mutableStateOf(channels.take(40)) }
-    var offset by remember { mutableIntStateOf(0) }
-    var loadingPage by remember { mutableStateOf(false) }
-    var canLoadMore by remember { mutableStateOf(channels.size > 40) }
-
-    LaunchedEffect(channels, query) {
-        loadingPage = true
-        val result = withContext(Dispatchers.IO) {
-            SportsChannelBridge.pageSportsChannels(context, query.trim(), 0, 40)
-        }
-        pageChannels = if (result.isNotEmpty() || query.isNotBlank()) result else channels.take(40)
-        offset = pageChannels.size
-        canLoadMore = result.size == 40 || (result.isEmpty() && query.isBlank() && channels.size > 40)
-        loadingPage = false
-    }
-
-    val sports = remember(pageChannels) { SportsNetworkCatalog.sportsChannels(pageChannels) }
-    val grouped = remember(sports) { sports.groupBy { it.second.key } }
-    val networks = remember(sports) { sports.map { it.second }.distinctBy { it.key } }
-
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Text("SPORTS TV", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
-            Text("US + Canada sports networks", color = Orange2, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Text(
-                when {
-                    loadingPage -> "Searching the indexed catalogue…"
-                    loading -> "Loading sports data…"
-                    indexing && sports.isEmpty() -> "Sports index is building while the full IPTV catalogue refreshes…"
-                    indexing -> "${sports.size} sports channels in this page; more are indexing…"
-                    else -> "${sports.size} sports channels shown"
-                },
-                color = Color.Gray,
-                fontSize = 12.sp
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Search sports channels") },
-                placeholder = { Text("ESPN, TSN, Sportsnet, NFL…") }
-            )
-        }
-        if (!loadingPage && sports.isEmpty()) {
-            item {
-                EmptyCard(
-                    if (query.isBlank()) "No sports networks found" else "No matching channels",
-                    if (query.isBlank()) "Add a source containing ESPN, TSN, Sportsnet, ACC Network or another supported sports network."
-                    else "Try a shorter name or another network."
-                )
-            }
-        }
-        items(networks, key = { "network-${it.key}" }) { network ->
-            val matches = grouped[network.key].orEmpty()
-            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(network.logoUrl, network.label, Modifier.size(48.dp), contentScale = ContentScale.Fit)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(network.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
-                            Text("${matches.size} channel${if (matches.size == 1) "" else "s"}", color = Color.Gray, fontSize = 11.sp)
-                        }
+        }) { padding ->
+            LazyColumn(Modifier.fillMaxSize().padding(padding),contentPadding=PaddingValues(bottom=26.dp),verticalArrangement=Arrangement.spacedBy(18.dp)) {
+                item { UHeader(tab,refreshing){refreshToken++} }
+                if(tab!=UTab.SOURCES) item { USearch(search,{search=it}) }
+                when(tab) {
+                    UTab.HOME -> {
+                        item { UHero(live.firstOrNull(),upcoming.firstOrNull(),channels.size,loading,activity::playChannel){ chosen=it } }
+                        item { USection("LIVE RIGHT NOW",live.size,"LIVE",ULive) }
+                        if(live.isEmpty()) item { UEmpty(if(loading)"Finding live games…" else "No live games at the moment","Your schedule updates automatically. Browse upcoming games below.") }
+                        else items(live.take(12),key={"live-${it.id}"}) { UEventCard(it,true,channels,now,saved,{id,v->saved[id]=v;prefs.edit().putBoolean(id,v).apply()},activity::playChannel){chosen=it} }
+                        item { USection("STARTING SOON",upcoming.size,"NEXT",UBlue) }
+                        if(upcoming.isEmpty()) item { UEmpty("Nothing upcoming","Try another sport or refresh the schedule.") }
+                        else items(upcoming.take(14),key={"next-${it.id}"}) { UEventCard(it,false,channels,now,saved,{id,v->saved[id]=v;prefs.edit().putBoolean(id,v).apply()},activity::playChannel){chosen=it} }
+                        item { USection("BROWSE SPORTS",SportsCatalog.categories.size,"EXPLORE",UAmber) }
+                        item { USportTiles(sport){sport=it;tab=UTab.SPORTS} }
+                        item { USection("SPORTS NETWORKS",channels.size,"TV",UBlue) }
+                        item { UChannelRail(channels,activity::playChannel) }
                     }
-                    Spacer(Modifier.height(8.dp))
-                    matches.forEach { (channel, _) ->
-                        OutlinedButton(onClick = { play(channel) }, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Default.PlayArrow, null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(channel.name, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
-                        }
+                    UTab.SPORTS -> {
+                        item { USportRail(sport){sport=it} }
+                        item { USection(if(sport=="All")"ALL EVENTS" else sport.uppercase(),filtered.size,"SCHEDULE",UBlue) }
+                        if(filtered.isEmpty()) item { UEmpty("No events found","Try another sport or search.") }
+                        else items(filtered.take(80),key={"schedule-${it.id}"}) { UEventCard(it,it.state=="in",channels,now,saved,{id,v->saved[id]=v;prefs.edit().putBoolean(id,v).apply()},activity::playChannel){chosen=it} }
                     }
+                    UTab.CHANNELS -> {
+                        item { USection("SPORTS TV",channels.size,"CHANNELS",UBlue) }
+                        items(channels.filter { search.isBlank() || it.name.contains(search,true) }.take(160),key={"ch-${it.id}-${it.url}"}) { c -> UChannelRow(c,activity::playChannel) }
+                    }
+                    UTab.SAVED -> {
+                        val favorites=filtered.filter{saved[it.id]==true}
+                        item { USection("SAVED EVENTS",favorites.size,"BOOKMARKS",UAmber) }
+                        if(favorites.isEmpty()) item { UEmpty("Your sports, saved","Tap the bookmark on an event to keep it here.") }
+                        else items(favorites,key={"fav-${it.id}"}) { UEventCard(it,it.state=="in",channels,now,saved,{id,v->saved[id]=v;prefs.edit().putBoolean(id,v).apply()},activity::playChannel){chosen=it} }
+                    }
+                    UTab.SOURCES -> item { USourcePanel { activity.openSourceApp() } }
                 }
+                if(error.isNotBlank()) item { UEmpty("Schedule update paused",error) }
             }
         }
-        if (canLoadMore && query.isBlank()) {
-            item {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            loadingPage = true
-                            val next = withContext(Dispatchers.IO) {
-                                SportsChannelBridge.pageSportsChannels(context, query.trim(), offset, 40)
-                            }
-                            if (next.isEmpty()) {
-                                canLoadMore = false
-                            } else {
-                                pageChannels = (pageChannels + next).distinctBy { "${it.id}|${it.url}" }
-                                offset += next.size
-                                canLoadMore = next.size == 40
-                            }
-                            loadingPage = false
-                        }
-                    },
-                    enabled = !loadingPage,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(if (loadingPage) "LOADING…" else "LOAD MORE CHANNELS") }
-            }
-        }
+        chosen?.let { ev -> UEventDialog(ev,channels,activity::playChannel){chosen=null} }
     }
 }
 
-@Composable private fun FavoritesTab(events: List<SportsEvent>, channels: List<SportsChannel>, favorites: MutableMap<String, Boolean>, play: (SportsChannel) -> Unit, playEvent: (SportsEvent) -> Unit, openEvent: (SportsEvent) -> Unit) { val saved = events.filter { favorites[it.id] == true }; LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { item { Text("FAVORITES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black) }; if (saved.isEmpty()) item { EmptyCard("Nothing saved yet", "Star an event to keep it here.") } else items(saved, key = { "fav-${it.id}" }) { EventCard(it, it.state == "in", channels, System.currentTimeMillis(), play, playEvent, openEvent, favorites) } } }
-@Composable private fun SourcesTab(open: () -> Unit) { Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text("SOURCES", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("Xtream Codes + M3U/M3U8", color = Color.Gray); Card(Modifier.fillMaxWidth().clickable { open() }, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.SettingsInputAntenna, null, tint = Orange); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text("Manage source", color = Color.White, fontWeight = FontWeight.Bold); Text("Connect, test and index your playlist", color = Color.Gray, fontSize = 12.sp) }; Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } } } }
-@Composable private fun BottomBar(selected: Int, onSelect: (Int) -> Unit) { NavigationBar(containerColor = Color(0xFF11131D)) { listOf(Icons.Default.Home to "Home", Icons.Default.SportsScore to "Sports", Icons.Default.LiveTv to "Sports TV", Icons.Default.Star to "Favorites", Icons.Default.Settings to "Sources").forEachIndexed { i, item -> NavigationBarItem(selected = selected == i, onClick = { onSelect(i) }, icon = { Icon(item.first, item.second) }, label = { Text(item.second) }) } } }
-@Composable private fun Header(refreshing: Boolean, onRefresh: () -> Unit) { Row(Modifier.fillMaxWidth().background(Panel2).padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("USPORTZ", fontSize = 31.sp, fontWeight = FontWeight.Black, color = Color.White); Text("SPORTS COMMAND CENTER", fontSize = 11.sp, color = Orange2, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp) }; IconButton(onClick = onRefresh, enabled = !refreshing) { Icon(if (refreshing) Icons.Default.Sync else Icons.Default.Refresh, "Refresh", tint = if (refreshing) Color.Gray else Orange) } } }
-@Composable private fun Hero(channels: Int, live: Int, soon: Int, today: Int, error: String) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var progress by remember { mutableStateOf<CatalogRefreshProgress?>(null) }
-    LaunchedEffect(channels) {
-        while (true) {
-            progress = withContext(Dispatchers.IO) { SportsChannelBridge.refreshProgress(context) }
-            delay(1_000)
+@Composable private fun UHeader(tab:UTab,refreshing:Boolean,refresh:()->Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("USPORTZ",color=Color.White,fontSize=26.sp,fontWeight=FontWeight.Black,letterSpacing=(-1).sp)
+            Text("YOUR SPORTS. ONE PLACE.",color=UBlue,fontSize=9.sp,fontWeight=FontWeight.Bold,letterSpacing=1.7.sp)
         }
+        Box(Modifier.background(USurface2,RoundedCornerShape(50)).padding(horizontal=10.dp,vertical=6.dp)) { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(6.dp).background(if(refreshing)UAmber else UBlue,RoundedCornerShape(50)));Spacer(Modifier.width(6.dp));Text(if(refreshing)"SYNCING" else "LIVE DATA",color=Color.LightGray,fontSize=9.sp,fontWeight=FontWeight.Bold)} }
+        IconButton(onClick=refresh,enabled=!refreshing){Icon(Icons.Default.Refresh,"Refresh",tint=UBlue)}
     }
-    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Panel2)) {
-        Column(Modifier.padding(20.dp)) {
-            Text("LIVE SPORTS", color = Orange, fontSize = 12.sp, fontWeight = FontWeight.Black)
-            Text("Tap a game to watch.", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 5.dp))
-            Text("$live live  •  $soon starting soon  •  $today later today  •  ${if (channels == 0 && progress != null && (SportsChannelBridge.isIndexing() || FastXtreamSportsBootstrap.isRunning())) "sports index building…" else "$channels sports channels"}", color = Color(0xFF9DA5B7), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-            progress?.let { p ->
-                val active = SportsChannelBridge.isIndexing() || p.imported > 0
-                if (active) {
-                    val determinate = p.expected > 0
-                    val fraction = if (determinate) (p.imported.toFloat() / p.expected.toFloat()).coerceIn(0f, 1f) else 0f
-                    Text(if (determinate) "${p.imported} / ${p.expected} channels refreshing" else "${p.imported} channels refreshing", color = Orange2, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 9.dp))
-                    LinearProgressIndicator(progress = { fraction }, color = Orange, trackColor = Panel, modifier = Modifier.fillMaxWidth().padding(top = 5.dp))
-                    if (!determinate) Text("Importing the complete provider catalogue — the previous complete snapshot stays live until this refresh finishes.", color = Color.Gray, fontSize = 9.sp, modifier = Modifier.padding(top = 4.dp))
+}
+@Composable private fun USearch(value:String,onChange:(String)->Unit) {
+    OutlinedTextField(value,onChange,Modifier.fillMaxWidth().padding(horizontal=18.dp),singleLine=true,placeholder={Text("Search teams, leagues, events…",fontSize=13.sp)},leadingIcon={Icon(Icons.Default.Search,null,tint=UBlue)},shape=RoundedCornerShape(16.dp),colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=UBlue,unfocusedBorderColor=ULine,focusedContainerColor=USurface,unfocusedContainerColor=USurface))
+}
+@Composable private fun UHero(event:SportsEvent?,next:SportsEvent?,count:Int,loading:Boolean,play:(SportsChannel)->Unit,open:(SportsEvent)->Unit) {
+    val featured=event?:next
+    Card(Modifier.fillMaxWidth().padding(horizontal=16.dp),shape=RoundedCornerShape(24.dp),colors=CardDefaults.cardColors(containerColor=USurface2)) {
+        Box(Modifier.fillMaxWidth().height(205.dp).background(Brush.horizontalGradient(listOf(Color(0xFF11283B),Color(0xFF101724),Color(0xFF25152B)))).padding(20.dp)) {
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
+                Row(verticalAlignment=Alignment.CenterVertically){Text(if(event!=null)"● LIVE NOW" else if(next!=null)"UP NEXT" else "SPORTS CENTRAL",color=if(event!=null)ULive else UBlue,fontSize=10.sp,fontWeight=FontWeight.Black);Spacer(Modifier.width(10.dp));Text("${count} SPORTS CHANNELS",color=Color.LightGray,fontSize=9.sp)}
+                Text(if(featured!=null)SportsPresentation.matchup(featured) else "Every game. Every league.",color=Color.White,fontSize=25.sp,fontWeight=FontWeight.Black,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=7.dp))
+                Text(if(featured!=null)featured.league+"  •  "+(featured.detail.ifBlank{featured.startTime}) else "Find live games and your favorite teams.",color=Color(0xFFB4C4D3),fontSize=12.sp,modifier=Modifier.padding(top=5.dp))
+                Row(Modifier.padding(top=12.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Button(onClick={featured?.let(open)},colors=ButtonDefaults.buttonColors(containerColor=UBlue,contentColor=Color(0xFF041018)),shape=RoundedCornerShape(10.dp),enabled=featured!=null){Icon(Icons.Default.PlayArrow,null);Text(if(event!=null)"FIND A STREAM" else "VIEW SCHEDULE",fontWeight=FontWeight.Black)}
+                    Spacer(Modifier.width(9.dp));Text("FAST • PERSONAL • SPORTS-FIRST",color=Color.Gray,fontSize=9.sp)
                 }
             }
-            if (error.isNotBlank()) Text("Data warning: $error", color = Orange2, fontSize = 10.sp, modifier = Modifier.padding(top = 7.dp))
         }
     }
 }
-@Composable private fun SportRail(selected: String, onSport: (String) -> Unit) { LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(SportsCatalog.categories, key = { it }) { sport -> FilterChip(selected = selected == sport, onClick = { onSport(sport) }, label = { Text(sport) }) } } }
-@Composable private fun ScheduleRail(selected: ScheduleBucket, onSelected: (ScheduleBucket) -> Unit, events: List<SportsEvent>, now: Long) { LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) { items(ScheduleBucket.values().toList(), key = { it.name }) { item -> FilterChip(selected = selected == item, onClick = { onSelected(item) }, label = { Text("${item.label}  ${events.count { scheduleBucket(it, now) == item }}") }) } } }
-@Composable private fun SectionTitle(title: String, detail: String, accent: Color) { Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.width(4.dp).height(24.dp).background(accent, RoundedCornerShape(3.dp))); Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) { Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Black); Text(detail, color = Color.Gray, fontSize = 11.sp) } } }
-@Composable private fun EmptyCard(title: String, subtitle: String) { Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp)) { Column(Modifier.padding(18.dp)) { Text(title, color = Color.White, fontWeight = FontWeight.Bold); Text(subtitle, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) } } }
-private fun emptyTitle(bucket: ScheduleBucket) = when (bucket) { ScheduleBucket.LIVE -> "No live games detected"; ScheduleBucket.STARTING_SOON -> "No events starting soon"; ScheduleBucket.TODAY -> "No more events today"; ScheduleBucket.TOMORROW -> "Nothing scheduled tomorrow"; ScheduleBucket.NEXT_3_DAYS -> "No events in the next three days"; ScheduleBucket.COMPLETED -> "No completed events" }
-private fun emptySubtitle(bucket: ScheduleBucket) = when (bucket) { ScheduleBucket.LIVE -> "The live schedule is checked independently of your Xtream playlist."; ScheduleBucket.STARTING_SOON -> "Events within the next six hours appear here."; ScheduleBucket.TODAY -> "The schedule will update as events are published."; ScheduleBucket.TOMORROW -> "The schedule will update as events are published."; ScheduleBucket.NEXT_3_DAYS -> "Try another sport or refresh."; ScheduleBucket.COMPLETED -> "Finished events remain available for reference." }
-private fun eventEpoch(value: String): Long? = runCatching { Instant.parse(value).toEpochMilli() }.getOrNull() ?: runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrNull() ?: value.toLongOrNull()?.let { if (it < 10_000_000_000L) it * 1000 else it }
-private fun scheduleBucket(event: SportsEvent, nowMs: Long): ScheduleBucket { val start = eventEpoch(event.startTime) ?: return if (event.state == "in") ScheduleBucket.LIVE else ScheduleBucket.TODAY; val delta = start - nowMs; val today = Instant.ofEpochMilli(nowMs).atZone(ZoneId.systemDefault()).toLocalDate(); val eventDay = Instant.ofEpochMilli(start).atZone(ZoneId.systemDefault()).toLocalDate(); return when { event.state == "in" -> ScheduleBucket.LIVE; event.state != "post" && delta <= 0 && delta > -6 * 60 * 60 * 1000L -> ScheduleBucket.LIVE; delta > 0 && delta <= 6 * 60 * 60 * 1000L -> ScheduleBucket.STARTING_SOON; eventDay == today -> ScheduleBucket.TODAY; eventDay == today.plusDays(1) -> ScheduleBucket.TOMORROW; eventDay.isAfter(today) && eventDay <= today.plusDays(3) -> ScheduleBucket.NEXT_3_DAYS; start < nowMs -> ScheduleBucket.COMPLETED; else -> ScheduleBucket.NEXT_3_DAYS } }
-private fun formatCountdown(ms: Long): String { val total = (ms / 1000).coerceAtLeast(0); val h = total / 3600; val m = (total % 3600) / 60; return if (h > 0) "${h}h ${m}m" else "${m}m" }
-private fun formatClock(value: String): String = runCatching { java.time.format.DateTimeFormatter.ofPattern("h:mm a").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(eventEpoch(value) ?: 0)) }.getOrDefault(value)
+@Composable private fun USection(title:String,count:Int,tag:String,accent:Color) {
+    Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),verticalAlignment=Alignment.CenterVertically) {
+        Box(Modifier.width(3.dp).height(27.dp).background(accent,RoundedCornerShape(3.dp)));Spacer(Modifier.width(10.dp))
+        Text(title,color=Color.White,fontSize=15.sp,fontWeight=FontWeight.Black,modifier=Modifier.weight(1f))
+        Text("$count  •  $tag",color=Color.Gray,fontSize=10.sp,fontWeight=FontWeight.Bold)
+    }
+}
+@Composable private fun UEventCard(event:SportsEvent,live:Boolean,channels:List<SportsChannel>,now:Long,saved:Map<String,Boolean>,toggle:(String,Boolean)->Unit,play:(SportsChannel)->Unit,open:(SportsEvent)->Unit) {
+    var sources by remember(event.id,channels){mutableStateOf(emptyList<SportsResolver.WatchSource>())}
+    LaunchedEffect(event.id,channels){sources=withContext(Dispatchers.Default){SportsResolver.resolve(event,channels,8)}}
+    val logo=event.leagueLogo?.takeIf{it.isNotBlank()}?:BrandAssets.logoUrl(SportsBranding.find(event.name,event.league))
+    Card(Modifier.fillMaxWidth().padding(horizontal=16.dp).clickable{if(sources.isNotEmpty())play(sources.first().channel)else open(event)},shape=RoundedCornerShape(18.dp),colors=CardDefaults.cardColors(containerColor=USurface)) {
+        Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically) {
+            Box(Modifier.size(54.dp).background(USurface2,RoundedCornerShape(14.dp)),contentAlignment=Alignment.Center){if(!logo.isNullOrBlank())AsyncImage(logo,event.league,Modifier.size(42.dp),contentScale=ContentScale.Fit)else Text(event.league.take(3).uppercase(),color=UBlue,fontWeight=FontWeight.Black)}
+            Column(Modifier.weight(1f).padding(start=12.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically){Text(if(live)"LIVE" else "UPCOMING",color=if(live)ULive else UAmber,fontSize=9.sp,fontWeight=FontWeight.Black);Spacer(Modifier.width(7.dp));Text(event.league,color=Color.Gray,fontSize=10.sp,maxLines=1)}
+                Text(SportsPresentation.matchup(event),color=Color.White,fontSize=16.sp,fontWeight=FontWeight.ExtraBold,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=4.dp))
+                Text(event.detail.ifBlank{event.startTime},color=Color(0xFF9EADBC),fontSize=11.sp,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=3.dp))
+                Text(if(sources.isEmpty())"Tap for channel matches" else "${sources.size} MATCHED SOURCES  •  ${sources.first().channel.name}",color=UBlue,fontSize=9.sp,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=6.dp))
+            }
+            IconButton(onClick={toggle(event.id,saved[event.id]!=true)}){Icon(if(saved[event.id]==true)Icons.Default.Bookmark else Icons.Default.BookmarkBorder,"Save event",tint=if(saved[event.id]==true)UBlue else Color.Gray)}
+        }
+    }
+}
+@Composable private fun USportRail(selected:String,on:(String)->Unit){LazyRow(contentPadding=PaddingValues(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){items(SportsCatalog.categories){s->FilterChip(selected==s,{on(s)},{Text(s)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=UBlue,selectedLabelColor=Color.Black))}}}
+@Composable private fun USportTiles(selected:String,on:(String)->Unit){LazyRow(contentPadding=PaddingValues(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){items(SportsCatalog.categories.take(12)){s->Card(Modifier.width(112.dp).height(82.dp).clickable{on(s)},shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Column(Modifier.fillMaxSize().padding(12.dp),verticalArrangement=Arrangement.SpaceBetween){Icon(Icons.Default.SportsScore,null,tint=UBlue);Text(s,color=Color.White,fontWeight=FontWeight.Bold,fontSize=12.sp,maxLines=1)}}}}}
+@Composable private fun UChannelRail(channels:List<SportsChannel>,play:(SportsChannel)->Unit){LazyRow(contentPadding=PaddingValues(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){items(channels.filter{SportsNetworkCatalog.sportsChannels(listOf(it)).isNotEmpty()}.take(18),key={"rail-${it.id}-${it.url}"}){c->Card(Modifier.width(180.dp).clickable{play(c)},shape=RoundedCornerShape(14.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Column(Modifier.padding(13.dp)){Icon(Icons.Default.LiveTv,null,tint=UBlue);Text(c.name,color=Color.White,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=8.dp));Text("WATCH CHANNEL  ›",color=UBlue,fontSize=9.sp,fontWeight=FontWeight.Bold)}}}}}
+@Composable private fun UChannelRow(c:SportsChannel,play:(SportsChannel)->Unit){Card(Modifier.fillMaxWidth().padding(horizontal=16.dp).clickable{play(c)},shape=RoundedCornerShape(14.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.LiveTv,null,tint=UBlue);Column(Modifier.weight(1f).padding(start=12.dp)){Text(c.name,color=Color.White,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis);Text("SPORTS CHANNEL",color=Color.Gray,fontSize=9.sp)};Icon(Icons.Default.PlayArrow,null,tint=UBlue)}}}
+@Composable private fun USourcePanel(open:()->Unit){Card(Modifier.fillMaxWidth().padding(18.dp),shape=RoundedCornerShape(22.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Column(Modifier.padding(22.dp)){Icon(Icons.Default.SettingsInputAntenna,null,tint=UBlue);Text("Your streaming sources",color=Color.White,fontSize=22.sp,fontWeight=FontWeight.Black,modifier=Modifier.padding(top=10.dp));Text("Connect Xtream Codes or an M3U playlist. Your provider credentials stay on this device.",color=Color.Gray,modifier=Modifier.padding(top=8.dp));Button(onClick=open,Modifier.fillMaxWidth().padding(top=16.dp),shape=RoundedCornerShape(12.dp)){Text("MANAGE SOURCES")}}}}
+@Composable private fun UEmpty(title:String,detail:String){Card(Modifier.fillMaxWidth().padding(horizontal=16.dp),shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=USurface)){Column(Modifier.padding(18.dp)){Text(title,color=Color.White,fontWeight=FontWeight.Bold);Text(detail,color=Color.Gray,fontSize=12.sp,modifier=Modifier.padding(top=5.dp))}}}
+@Composable private fun UEventDialog(event:SportsEvent,channels:List<SportsChannel>,play:(SportsChannel)->Unit,close:()->Unit){val matches by produceState(emptyList<SportsResolver.WatchSource>(),event.id,channels){value=withContext(Dispatchers.Default){SportsResolver.resolve(event,channels,16)}};AlertDialog(onDismissRequest=close,containerColor=USurface2,title={Text(SportsPresentation.matchup(event),color=Color.White,fontWeight=FontWeight.Black)},text={Column{Text("${matches.size} channel matches",color=UBlue);matches.take(12).forEach{m->TextButton(onClick={close();play(m.channel)}){Text("${m.score}%  •  ${m.channel.name}",color=Color.White)}}}},confirmButton={TextButton(close){Text("CLOSE",color=UBlue)}})}
+private fun epoch(value:String):Long?=runCatching{Instant.parse(value).toEpochMilli()}.getOrNull()?:value.toLongOrNull()?.let{if(it<10000000000L)it*1000 else it}
