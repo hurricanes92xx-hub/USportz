@@ -39,11 +39,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val TvBg = Color(0xFF05080D)
-private val TvSurface = Color(0xFF0D141D)
-private val TvSurface2 = Color(0xFF131D28)
-private val TvAccent = Color(0xFF55C7FF)
-private val TvPurple = Color(0xFF9B72FF)
+private val TvBg = Color(0xFF070B12)
+private val TvSurface = Color(0xFF101925)
+private val TvSurface2 = Color(0xFF172333)
+private val TvAccent = Color(0xFF35D6FF)
+private val TvPurple = Color(0xFFFFB547)
 
 class TvMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,7 +105,7 @@ private fun TvUSportzApp(context: Context) {
 private fun TvRail(selected: Int, onSelect: (Int) -> Unit) {
     Column(Modifier.width(168.dp).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("USPORTZ", color = TvAccent, fontSize = 24.sp, fontWeight = FontWeight.Black)
-        Text("PREMIUM TV", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text("SPORTS • LIVE • ON DEMAND", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(20.dp))
         listOf("Home" to Icons.Default.Home, "Sports" to Icons.Default.SportsScore, "Live TV" to Icons.Default.LiveTv, "Favorites" to Icons.Default.Star).forEachIndexed { i, item ->
             TvNavButton(item.first, item.second, selected == i) { onSelect(i) }
