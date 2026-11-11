@@ -76,20 +76,17 @@ private enum class UTab(val label: String) { HOME("Home"), SPORTS("Sports"), CHA
                 c.await() to e.await()
             }
             channels = pair.first; events = pair.second
-            if (events.isNotEmpty()) withContext(Dispatchers.IO) { SportsScheduleDiskCache.write(activity, events) }
         } catch (t: Throwable) { error = t.message?.take(160) ?: "Sports data is temporarily unavailable" }
         finally { loading = false; refreshing = false; now = System.currentTimeMillis() }
     }
     LaunchedEffect(Unit) {
-        val cached = withContext(Dispatchers.IO) { SportsScheduleDiskCache.read(activity) }
-        if (cached.isNotEmpty()) { events = cached; loading = false }
         reload(false)
         while (true) { delay(45_000); reload(false) }
     }
     LaunchedEffect(refreshToken) { if (refreshToken > 0) reload(true) }
 
     val filtered = remember(events, sport, search) {
-        SportsSchedule.forSport(events, sport).filter { search.isBlank() || listOf(it.name,it.league,it.detail,it.competitors.joinToString()).any { s -> s.contains(search, true) } }
+        events.filter { sport == "All" || SportsCatalog.classify(it.name, it.league).equals(sport, true) || (sport == "Motorsports" && SportsCatalog.classify(it.name, it.league) == "Racing") }.filter { search.isBlank() || listOf(it.name,it.league,it.detail,it.competitors.joinToString()).any { s -> s.contains(search, true) } }
     }
     val live = filtered.filter { it.state == "in" || (epoch(it.startTime)?.let { t -> t <= now && now-t < 6*3600000L } == true && it.state != "post") }
     val upcoming = filtered.filter { it.state != "in" && (epoch(it.startTime) ?: 0L) > now }.sortedBy { epoch(it.startTime) ?: Long.MAX_VALUE }
