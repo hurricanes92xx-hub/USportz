@@ -1,66 +1,32 @@
 # USPortz
 
-Fresh Android + Android TV sports command center rebuilt from observed product capabilities. The reliability pass is cache-first and optimized for large IPTV catalogues.
+**Your sports, one place.** USPortz is an Android + Android TV sports discovery and live-TV companion built around a fast, local channel catalogue and a unified sports schedule.
 
-## Scope
-- Original Kotlin/Jetpack Compose implementation.
-- Xtream Codes M3U+ connection plus generic M3U/M3U8 loading.
-- Complete provider catalogue streamed into SQLite in bounded batches; Compose reads bounded projections.
-- Last-good catalogue snapshot remains available while provider refresh runs.
-- Live event rollover retention across midnight (yesterday + today + lookahead).
-- Indexed event-to-channel candidate resolution followed by detailed scoring.
-- Media3 live playback with bounded recovery attempts.
-- Sports/event home, categories, favorites and search foundation.
-- Channel data can render independently of EPG enrichment.
-- Phone/tablet UI with Android TV directional-input support.
-- NCAA Football FBS plus NCAA men's and women's Division I basketball intelligence merged into the same `SportsEvent` pipeline used by the rest of the sports system.
-- MLB and NHL native schedule adapters.
-- Soccer, tennis, golf, UFC, boxing, F1, NASCAR, CFL, UFL and college sports feeds through the existing ESPN schedule layer.
-- Persistent Channel DNA and playback health/ranking remain independent of external sports-data availability.
-- Lazy ESPN game detail enrichment on demand.
-- XMLTV/EPG normalization with visible-first startup and stale-cache retention.
-- Optional BALLDONTLIE, PWHL/LeagueStat-compatible and SportsDataverse-compatible adapters, all normalized into `SportsEvent`.
-- BrightSports-style followed-team persistence for future alerts/rails without coupling it to playback.
+## Product experience
+- Live Now, Starting Soon, Today and Upcoming event discovery.
+- Sport/league schedules, team follow foundation, event-to-channel matching and multiple ranked IPTV source options.
+- Xtream Codes and generic M3U/M3U8 source support; credentials stay on device.
+- Sports network browsing, favorites, source management and Media3 playback.
+- Phone/tablet UI plus a dedicated Android TV / D-pad experience.
 
-## Sports provider architecture
-All sports-data sources are supplemental metadata. They normalize into `SportsEvent`, are loaded concurrently by `SportsProviderEngine`, and are deduplicated before matching. Xtream remains the playable source; `GameSourceMatcher`, Channel DNA, EPG intelligence and IPTV health decide which actual channel/feed to open.
+## Sports coverage
+ESPN schedule layer, NCAA FBS and Division I men's/women's basketball, native MLB and NHL schedules, plus soccer, tennis, golf, MMA, boxing, racing, CFL/UFL and college sports. Optional adapters include BALLDONTLIE, PWHL/LeagueStat-compatible and SportsDataverse-compatible endpoints. All providers normalize into the same `SportsEvent` model; external sports data is metadata, while Xtream/M3U remains the playable source.
 
-Current provider families:
-- ESPN: major US sports, soccer, tennis, golf, MMA, boxing, racing and college coverage.
-- NCAA API: FBS football and D-I men's/women's basketball.
-- MLB Stats API: native MLB schedule/status.
-- NHL API: native NHL schedule/status.
-- BALLDONTLIE: optional NBA enrichment when an API key is configured.
-- PWHL/LeagueStat-compatible JSON: optional endpoint when configured.
-- SportsDataverse-compatible JSON: optional self-hosted snapshot/adapter endpoint when configured.
+## Fast catalogue architecture
+- Stream imports into SQLite in bounded batches; swap the active catalogue only after a complete generation is ready.
+- FTS4 indexes channel names, groups and metadata; existing catalogues are upgraded/backfilled.
+- Indexed event-to-channel candidates, substring fallback and bounded top-K ranking.
+- Sports TV uses 40-item SQLite pages and indexed search instead of loading every channel into Compose.
+- Cached last-good catalogue/schedule remains visible during refresh.
+- Lazy artwork and background enrichment; source refresh does not gate schedule rendering.
 
-Optional Gradle properties:
-- `NCAA_API_BASE_URL`, `NCAA_API_KEY`
-- `BALLDONTLIE_API_KEY`
-- `PWHL_LEAGUESTAT_URL`
-- `SPORTSDATAVERSE_URL`
+The importer emits a credential-free `USPortzPerf` log line. Capture with `adb logcat -s USPortzPerf:I`. Benchmark cold start, first sports channel, full import, search latency and memory on the same device/source—especially with a 50k+ test catalogue.
 
-Providers with no configured endpoint/key simply return an empty list and never block the rest of the sports engine.
-
-## NCAA data architecture
-USPortz uses `henrygd/ncaa-api` as a bounded sports-data supplement. The public endpoint is the default, but the app accepts `-PNCAA_API_BASE_URL` and optional `-PNCAA_API_KEY` Gradle properties so production builds can point at a self-hosted instance.
-
-The app caches NCAA scoreboard responses for 45 seconds, caps imported games, uses short network timeouts, and never blocks Xtream catalogue startup or playback on NCAA availability.
-
-Self-hosting assets are included under `deploy/ncaa-api/`.
-
-## Large-catalogue performance
-- Channel imports remain streamed and batch-written; the active catalogue is swapped only after a complete generation is available.
-- SQLite now maintains an FTS4 index over channel names, groups and EPG/provider metadata. Existing databases are upgraded and their current catalogue is backfilled into the index.
-- Event-to-channel matching tries the dedicated North America sports fast lane, then full-text candidates, with the existing substring and broad sports fallback retained for compatibility.
-- Sports TV browsing requests bounded 40-channel pages from SQLite rather than requiring the UI to materialize the entire active sports catalogue. Search uses the full-text index with a substring fallback.
-- In-memory `ChannelIndex` ranking now keeps a bounded top-K heap instead of sorting every match, while preserving the existing relevance score and deterministic tie order.
-- Unit tests cover exact-match ranking, bounded result counts and empty/unmatched searches.
-
-The importer emits a credential-free `USPortzPerf` log line with success, channel count and elapsed milliseconds. Capture it with `adb logcat -s USPortzPerf:I`. Performance should be compared on the same device and source before claiming a speedup. A useful check is cold-start time to first sports channel, full import duration, search latency for common team/network names, and memory use with a 50k+ channel test catalogue.
-
-## Security
-Xtream credentials remain device-side. Do not commit real credentials, playlists, provider URLs, or API secrets.
+## Interface direction
+The design target is a premium, sports-first interface: cinematic live event hero, Live Now and Starting Soon rails, sport tiles, followed teams, global search, clean channel browsing, persistent favorites, and a remote-first TV layout. See [UI Design & Product Roadmap](docs/UI_DESIGN.md). This is a design target, not a claim that every listed screen is already implemented.
 
 ## Build
-Open in Android Studio with a current Android SDK and run the `app` configuration. GitHub Actions builds the debug APK on pushes and pull requests targeting `main`.
+Open in Android Studio with a current Android SDK and run the `app` configuration. GitHub Actions runs unit tests and builds debug/release APKs.
+
+## Security
+Never commit provider URLs, playlists, Xtream credentials, keystores, or API keys. Configure optional provider keys through local Gradle properties or repository secrets.
