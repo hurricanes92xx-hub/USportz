@@ -30,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -216,13 +217,112 @@ enum class ScheduleBucket(val label: String) { LIVE("LIVE NOW"), STARTING_SOON("
 }
 
 @Composable private fun SportsNewsTab(channels: List<SportsChannel>, loading: Boolean, indexing: Boolean, play: (SportsChannel) -> Unit) {
-    val sports = remember(channels) { SportsNetworkCatalog.sportsChannels(channels) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var pageChannels by remember(channels) { mutableStateOf(channels.take(40)) }
+    var offset by remember { mutableIntStateOf(0) }
+    var loadingPage by remember { mutableStateOf(false) }
+    var canLoadMore by remember { mutableStateOf(channels.size > 40) }
+
+    LaunchedEffect(channels, query) {
+        loadingPage = true
+        val result = withContext(Dispatchers.IO) {
+            SportsChannelBridge.pageSportsChannels(context, query.trim(), 0, 40)
+        }
+        pageChannels = if (result.isNotEmpty() || query.isNotBlank()) result else channels.take(40)
+        offset = pageChannels.size
+        canLoadMore = result.size == 40 || (result.isEmpty() && query.isBlank() && channels.size > 40)
+        loadingPage = false
+    }
+
+    val sports = remember(pageChannels) { SportsNetworkCatalog.sportsChannels(pageChannels) }
     val grouped = remember(sports) { sports.groupBy { it.second.key } }
     val networks = remember(sports) { sports.map { it.second }.distinctBy { it.key } }
+
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("SPORTS TV", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black); Text("US + Canada sports networks", color = Orange2, fontSize = 13.sp, fontWeight = FontWeight.Bold); Text(when { loading -> "Loading sports data…"; indexing && sports.isEmpty() -> "Sports index is building while the full IPTV catalogue refreshes…"; indexing -> "${sports.size} sports channels indexed so far…"; else -> "${sports.size} sports channels found" }, color = Color.Gray, fontSize = 12.sp) }
-        if (!loading && !indexing && sports.isEmpty()) item { EmptyCard("No sports networks found", "Add a source containing ESPN, TSN, Sportsnet, ACC Network or another supported sports network.") }
-        items(networks, key = { "network-${it.key}" }) { network -> val matches = grouped[network.key].orEmpty(); Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) { Column(Modifier.padding(14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { AsyncImage(network.logoUrl, network.label, Modifier.size(48.dp), contentScale = ContentScale.Fit); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(network.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold); Text("${matches.size} channel${if (matches.size == 1) "" else "s"}", color = Color.Gray, fontSize = 11.sp) } }; Spacer(Modifier.height(8.dp)); matches.take(8).forEach { (channel, _) -> OutlinedButton(onClick = { play(channel) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(channel.name, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis); Icon(Icons.Default.ChevronRight, null, tint = Color.Gray) } } } } }
+        item {
+            Text("SPORTS TV", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
+            Text("US + Canada sports networks", color = Orange2, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(
+                when {
+                    loadingPage -> "Searching the indexed catalogue…"
+                    loading -> "Loading sports data…"
+                    indexing && sports.isEmpty() -> "Sports index is building while the full IPTV catalogue refreshes…"
+                    indexing -> "${sports.size} sports channels in this page; more are indexing…"
+                    else -> "${sports.size} sports channels shown"
+                },
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Search sports channels") },
+                placeholder = { Text("ESPN, TSN, Sportsnet, NFL…") }
+            )
+        }
+        if (!loadingPage && sports.isEmpty()) {
+            item {
+                EmptyCard(
+                    if (query.isBlank()) "No sports networks found" else "No matching channels",
+                    if (query.isBlank()) "Add a source containing ESPN, TSN, Sportsnet, ACC Network or another supported sports network."
+                    else "Try a shorter name or another network."
+                )
+            }
+        }
+        items(networks, key = { "network-${it.key}" }) { network ->
+            val matches = grouped[network.key].orEmpty()
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AsyncImage(network.logoUrl, network.label, Modifier.size(48.dp), contentScale = ContentScale.Fit)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(network.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("${matches.size} channel${if (matches.size == 1) "" else "s"}", color = Color.Gray, fontSize = 11.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    matches.forEach { (channel, _) ->
+                        OutlinedButton(onClick = { play(channel) }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.PlayArrow, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text(channel.name, color = Color.White, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+                        }
+                    }
+                }
+            }
+        }
+        if (canLoadMore && query.isBlank()) {
+            item {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            loadingPage = true
+                            val next = withContext(Dispatchers.IO) {
+                                SportsChannelBridge.pageSportsChannels(context, query.trim(), offset, 40)
+                            }
+                            if (next.isEmpty()) {
+                                canLoadMore = false
+                            } else {
+                                pageChannels = (pageChannels + next).distinctBy { "${it.id}|${it.url}" }
+                                offset += next.size
+                                canLoadMore = next.size == 40
+                            }
+                            loadingPage = false
+                        }
+                    },
+                    enabled = !loadingPage,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (loadingPage) "LOADING…" else "LOAD MORE CHANNELS") }
+            }
+        }
     }
 }
 
