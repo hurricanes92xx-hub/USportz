@@ -10,10 +10,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: android-build-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,10 +26,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
+          gradle-version: 8.10.2
 
       - name: Verify checked-out commit
         run: |
@@ -42,7 +38,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Build and test APKs
-        run: gradle --no-daemon testDebugUnitTest assembleDebug assembleRelease
+        run: gradle --version && gradle --no-daemon testDebugUnitTest assembleDebug assembleRelease
 
       # Configure these four repository Actions secrets to produce an installable,
       # signed release APK. Without them, the release artifact remains unsigned.
